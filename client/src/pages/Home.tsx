@@ -80,7 +80,10 @@ export default function Home() {
             {PROVIDERS.map(p => (
               <div key={p.key} className="flex items-center gap-2 rounded-lg border px-3 py-2">
                 <CircleDot className={`h-4 w-4 ${p.enabled ? "text-green-500" : "text-muted-foreground/40"}`} />
-                <span className={`text-sm font-medium ${p.enabled ? "" : "text-muted-foreground"}`}>{p.name}</span>
+                <div className="flex flex-col">
+                  <span className={`text-sm font-medium ${p.enabled ? "" : "text-muted-foreground"}`}>{p.name}</span>
+                  <span className="text-xs text-muted-foreground">{p.model}</span>
+                </div>
                 <Badge variant={p.enabled ? "default" : "secondary"} className="text-xs">
                   {p.enabled ? "Enabled" : "Disabled"}
                 </Badge>

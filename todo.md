@@ -20,3 +20,18 @@
 - [x] Phase completion view with re-run and stale warnings
 - [x] Vitest tests for tRPC procedures and workflow logic (37 tests passing)
 - [x] Polling for real-time workflow progress updates (3s interval during active states)
+- [x] Replace invokeLLM with direct provider API calls (Anthropic Claude, OpenAI GPT, Google Gemini, xAI Grok)
+- [x] Add API key secrets: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_GEMINI_API_KEY, XAI_API_KEY
+- [x] Create server/llm-providers.ts with provider-specific API clients (no SDKs, raw HTTP)
+- [x] Update competitive drafting to route each provider to its real API endpoint
+- [x] Update provider status on Dashboard to reflect real API key availability
+- [x] Update tests for new provider integration
+- [x] Add API key secrets for Anthropic (Claude), OpenAI (GPT-5.4), Google (Gemini), xAI (Grok)
+- [x] Implement direct API client for Anthropic Claude (Messages API)
+- [x] Implement direct API client for OpenAI GPT-5.4 (Chat Completions API)
+- [x] Implement direct API client for Google Gemini (Generative Language API)
+- [x] Implement direct API client for xAI Grok (Chat Completions API)
+- [x] Create unified multi-provider LLM service that dispatches to correct provider
+- [x] Update competitive drafting to use direct provider APIs instead of invokeLLM
+- [x] Write vitest tests for multi-provider LLM client (23 tests passing)
+- [x] Verify end-to-end workflow with real provider API calls

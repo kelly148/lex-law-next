@@ -335,7 +335,7 @@ const uploadRouter = router({
 
 const configRouter = router({
   providers: publicProcedure.query(() => {
-    return PROVIDERS.map(p => ({ name: p.name, key: p.key, enabled: p.enabled }));
+    return PROVIDERS.map(p => ({ name: p.name, key: p.key, model: p.model, enabled: p.enabled }));
   }),
   workflow: publicProcedure.query(() => {
     return {

@@ -34,10 +34,10 @@ export const WORKFLOW_STATES = [
 export type WorkflowState = (typeof WORKFLOW_STATES)[number];
 
 export const PROVIDERS = [
-  { name: "Claude", key: "claude", enabled: true },
-  { name: "GPT-5.4", key: "gpt", enabled: true },
-  { name: "Gemini", key: "gemini", enabled: true },
-  { name: "Grok", key: "grok", enabled: false },
+  { name: "Claude", key: "claude", model: "claude-sonnet-4-6", enabled: true },
+  { name: "GPT-5.4", key: "gpt", model: "gpt-5.4", enabled: true },
+  { name: "Gemini", key: "gemini", model: "gemini-2.5-pro", enabled: true },
+  { name: "Grok", key: "grok", model: "grok-3", enabled: false },
 ] as const;
 
 export type ProviderKey = "claude" | "gpt" | "gemini" | "grok";
