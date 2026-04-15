@@ -119,6 +119,22 @@ export async function updatePhaseWorkflowState(matterId: string, phaseName: stri
   return getPhase(matterId, phaseName);
 }
 
+export async function updatePhaseFields(matterId: string, phaseName: string, fields: Record<string, any>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(phases).set(fields)
+    .where(and(eq(phases.matterId, matterId), eq(phases.phaseName, phaseName as any)));
+  return getPhase(matterId, phaseName);
+}
+
+export async function setPhaseStatus(matterId: string, phaseName: string, status: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(phases).set({ status: status as any })
+    .where(and(eq(phases.matterId, matterId), eq(phases.phaseName, phaseName as any)));
+  return getPhase(matterId, phaseName);
+}
+
 export async function skipPhase(matterId: string, phaseName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -156,6 +172,18 @@ export async function getVersionsByPhase(matterId: string, phaseName: string) {
   return db.select().from(versions)
     .where(and(eq(versions.matterId, matterId), eq(versions.phaseName, phaseName)))
     .orderBy(desc(versions.versionNumber), asc(versions.provider));
+}
+
+export async function getVersionByNumber(matterId: string, phaseName: string, versionNumber: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [row] = await db.select().from(versions)
+    .where(and(
+      eq(versions.matterId, matterId),
+      eq(versions.phaseName, phaseName),
+      eq(versions.versionNumber, versionNumber),
+    )).limit(1);
+  return row ?? null;
 }
 
 export async function selectVersion(versionId: number, matterId: string, phaseName: string) {
@@ -215,9 +243,7 @@ export async function createFactChange(data: InsertFactChange) {
   // Mark affected phases AND all downstream phases stale
   const affectedPhases = data.affectedPhases as string[];
   if (affectedPhases && affectedPhases.length > 0) {
-    // Find the earliest affected phase order
     const earliestOrder = Math.min(...affectedPhases.map(p => PHASE_ORDER[p as keyof typeof PHASE_ORDER] ?? 99));
-    // All phases at or after that order get marked stale
     const downstreamPhases = PHASE_NAMES.filter(p => PHASE_ORDER[p] >= earliestOrder);
     await markPhasesStale(data.matterId, downstreamPhases);
   }

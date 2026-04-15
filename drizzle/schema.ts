@@ -40,11 +40,23 @@ export const phases = mysqlTable("phases", {
   ]).notNull(),
   phaseLabel: varchar("phaseLabel", { length: 128 }).notNull(),
   phaseOrder: int("phaseOrder").notNull(),
-  status: mysqlEnum("status", ["not_started", "in_progress", "completed", "skipped"]).default("not_started").notNull(),
+  status: mysqlEnum("status", [
+    "not_started", "in_progress", "completed", "skipped", "waiting_on_client",
+  ]).default("not_started").notNull(),
   workflowState: mysqlEnum("workflowState", [
-    "idle", "drafting", "awaiting_selection", "reviewing", "evaluating",
-    "awaiting_decisions", "regenerating", "complete",
+    "idle", "model_selection", "processing", "drafting", "awaiting_selection",
+    "awaiting_attorney_review", "revising", "reviewing", "evaluating",
+    "awaiting_decisions", "regenerating", "accepted", "formatting",
+    "awaiting_format_review", "complete",
   ]).default("idle").notNull(),
+  // Workflow mode for this phase instance
+  activeWorkflowMode: varchar("activeWorkflowMode", { length: 64 }),
+  // Which model was selected (for single_model and single_model_draft)
+  selectedModelId: varchar("selectedModelId", { length: 64 }),
+  // Locked substantive version (for formatting pass)
+  acceptedSubstantiveVersion: int("acceptedSubstantiveVersion"),
+  // Final version number after all processing complete
+  officialFinalVersion: int("officialFinalVersion"),
   isOptional: int("isOptional").default(0).notNull(),
   isStale: int("isStale").default(0).notNull(),
   workflowData: json("workflowData"),
@@ -64,6 +76,7 @@ export const versions = mysqlTable("versions", {
   provider: varchar("provider", { length: 64 }).notNull(),
   content: text("content").notNull(),
   isSelected: int("isSelected").default(0).notNull(),
+  isFormattingPass: int("isFormattingPass").default(0).notNull(),
   metadata: json("metadata"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

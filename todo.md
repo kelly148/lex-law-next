@@ -41,3 +41,62 @@
 - [x] Integrate GPT master prompt as system prompt for GPT/ChatGPT provider
 - [x] Update LLM client to prepend provider-specific master prompt before phase prompt
 - [x] Update tests for master prompt integration (29 tests passing)
+
+## Workflow Restructure (Phase Modes, Stages, Claude Formatting Pass)
+
+### Shared Config & DB Schema
+- [x] Add 4 workflow modes to shared config: single_model, competitive_select, single_model_draft, full_competitive
+- [x] Add stage grouping (Analysis / Document Generation) to shared phase config
+- [x] Add per-phase config: default_mode, escalatable, has_formatting_pass, conditional
+- [x] Rename "Agreement" UI label to "Final Legal Document" (internal key stays "agreement")
+- [x] Add new workflow states: model_selection, processing, awaiting_attorney_review, revising, accepted, formatting, awaiting_format_review
+- [x] Add DB columns: active_workflow_mode, selected_model_id, accepted_substantive_version, official_final_version
+- [x] Add DB column: is_formatting_pass on phase_versions/drafts table
+- [x] Run migration SQL for new columns
+
+### Workflow Engine (server/llm.ts)
+- [x] Implement run_single_model: one model processes, saves as v1, official_final_version=1, complete
+- [x] Implement run_competitive_select (reuse existing parallel draft, save selected as v1, official_final_version=1)
+- [x] Implement run_single_model_draft: one model drafts v1, attorney review/revise loop, accepted version becomes official_final_version
+- [x] Implement run_revision: same model revises based on attorney feedback
+- [x] Implement run_formatting_pass: always Claude, always from locked substantive version, saves as new version with is_formatting_pass=true
+- [x] Store formatting pass prompt in code (from spec)
+
+### Backend Routes (server/routers.ts)
+- [x] Add mode routing in startPhase: route to correct engine function based on active_workflow_mode
+- [x] Add agreement mode lock: reject workflow_mode_override != full_competitive for agreement phase (400 error)
+- [x] Add select-model endpoint (for single_model and single_model_draft modes)
+- [x] Add revision endpoint (single_model_draft only, validates awaiting_attorney_review)
+- [x] Add accept endpoint (single_model_draft only, records official_final_version)
+- [x] Add waiting-on-client / client-responded endpoints
+- [x] Add approve-formatting endpoint (records official_final_version, completes phase)
+- [x] Add adjust-formatting endpoint (re-runs from locked substantive version)
+- [x] Update existing decisions endpoint: accept_current triggers formatting pass if has_formatting_pass
+- [x] Phase gate: waiting_on_client does NOT satisfy prerequisites (only complete does)
+
+### Frontend Components
+- [x] Build ModelSelector component (radio buttons for enabled models)
+- [x] Build AttorneyDraftReview component (rendered draft + revision textarea + accept/revise buttons)
+- [x] Build FormattingReview component (formatted doc + source version + flags panel + approve/adjust buttons)
+- [x] If Claude flags are not clearly identifiable, omit flags panel (do not infer from ambiguous text)
+- [x] Update PhaseView routing for all new workflow states
+- [x] Update PhaseIdle with workflow mode dropdown (Document Generation phases only)
+- [x] Update sidebar with stage grouping (ANALYSIS / DOCUMENT GENERATION headers)
+- [x] Update sidebar status icons (waiting_on_client = amber, etc.)
+- [x] Update PhaseComplete with waiting-on-client button (Document Generation phases)
+- [x] Final Legal Document: waiting-on-client only after formatting approved
+
+### Tests
+- [x] test_single_model_mode (intake path)
+- [x] test_competitive_select_mode (planning path)
+- [x] test_single_model_draft_mode (engagement path with revise/accept)
+- [x] test_single_model_draft_escalation (engagement escalated to full_competitive)
+- [x] test_formatting_pass_trigger (full_competitive accept triggers formatting)
+- [x] test_formatting_from_locked_version (always reads accepted_substantive_version)
+- [x] test_formatting_adjustment_from_locked_version
+- [x] test_formatting_approval (sets official_final_version, completes phase)
+- [x] test_waiting_on_client_set_and_clear
+- [x] test_waiting_on_client_blocks_downstream
+- [x] test_agreement_mode_lock (reject non-full_competitive for agreement)
+- [x] test_official_final_version_recorded (all modes)
+- [x] All existing tests still pass (83 tests, 4 test files)

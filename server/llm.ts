@@ -1,14 +1,14 @@
 /**
- * Multi-provider competitive drafting service.
- * Each provider is called via its native API endpoint with its own API key.
+ * Multi-provider LLM service with 4 workflow modes + Claude formatting pass.
  *
+ * Providers (native API calls):
  * - Claude  → Anthropic Messages API (claude-sonnet-4-6)
  * - GPT-5.4 → OpenAI Chat Completions API (gpt-5.4)
  * - Gemini  → Google Generative Language API (gemini-2.5-pro)
  * - Grok    → xAI OpenAI-compatible API (grok-3) — wired but disabled
  */
 import { ENV } from "./_core/env";
-import { ENABLED_PROVIDERS, type ProviderKey } from "../shared/workflow";
+import { ENABLED_PROVIDERS, FORMATTING_PASS_PROMPT, type ProviderKey } from "../shared/workflow";
 import { MASTER_PROMPTS } from "./masterPrompts";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -29,12 +29,13 @@ export interface ReviewResult {
   error?: string;
 }
 
+export interface FormattingResult {
+  content: string;
+  flags: string[];
+}
+
 // ── Provider-specific API callers ────────────────────────────────────
 
-/**
- * Call Anthropic Messages API (Claude).
- * Docs: https://docs.anthropic.com/en/api/messages
- */
 async function callClaude(
   systemPrompt: string,
   userPrompt: string,
@@ -67,15 +68,10 @@ async function callClaude(
   }
 
   const data = await res.json();
-  // Anthropic returns { content: [{ type: "text", text: "..." }] }
   const textBlocks = data.content?.filter((b: any) => b.type === "text") || [];
   return textBlocks.map((b: any) => b.text).join("\n") || "";
 }
 
-/**
- * Call OpenAI Chat Completions API (GPT-5.4).
- * Docs: https://platform.openai.com/docs/api-reference/chat/create
- */
 async function callOpenAI(
   systemPrompt: string,
   userPrompt: string,
@@ -116,10 +112,6 @@ async function callOpenAI(
   return data.choices?.[0]?.message?.content || "";
 }
 
-/**
- * Call Google Gemini Generative Language API.
- * Docs: https://ai.google.dev/api/generate-content
- */
 async function callGemini(
   systemPrompt: string,
   userPrompt: string,
@@ -160,15 +152,10 @@ async function callGemini(
   }
 
   const data = await res.json();
-  // Gemini returns { candidates: [{ content: { parts: [{ text: "..." }] } }] }
   const parts = data.candidates?.[0]?.content?.parts || [];
   return parts.map((p: any) => p.text).join("\n") || "";
 }
 
-/**
- * Call xAI Grok API (OpenAI-compatible).
- * Docs: https://docs.x.ai/overview
- */
 async function callGrok(
   systemPrompt: string,
   userPrompt: string,
@@ -250,11 +237,42 @@ export async function callProvider(
   return caller(fullSystemPrompt, userPrompt, maxTokens, jsonMode);
 }
 
-// ── Competitive Drafting ─────────────────────────────────────────────
+// ── Mode: single_model ──────────────────────────────────────────────
+
+/**
+ * Run a single model to process source materials.
+ * Used for Intake and Issues phases. Output saved as v1, immediately complete.
+ */
+export async function runSingleModel(
+  providerKey: ProviderKey,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<DraftResult> {
+  try {
+    const content = await callProvider(providerKey, systemPrompt, userPrompt);
+    const provider = ENABLED_PROVIDERS.find(p => p.key === providerKey) ||
+      { key: providerKey, name: providerKey };
+    return {
+      provider: provider.key,
+      providerLabel: provider.name,
+      content,
+    };
+  } catch (err: any) {
+    return {
+      provider: providerKey,
+      providerLabel: providerKey,
+      content: "",
+      error: err.message || "Unknown error",
+    };
+  }
+}
+
+// ── Mode: competitive_select (reuses runCompetitiveDraft) ───────────
 
 /**
  * Run competitive drafting: invoke all enabled providers in parallel
  * via their native APIs and return all draft results.
+ * Used for competitive_select (Planning) and full_competitive (Agreement).
  */
 export async function runCompetitiveDraft(
   systemPrompt: string,
@@ -294,11 +312,54 @@ export async function runCompetitiveDraft(
   return Promise.all(promises);
 }
 
-// ── Review Cycle ─────────────────────────────────────────────────────
+// ── Mode: single_model_draft ────────────────────────────────────────
 
 /**
- * Run review cycle: each enabled provider reviews the selected draft
- * via its native API.
+ * Run a single model draft (same as runSingleModel but used in the
+ * single_model_draft workflow where attorney can revise).
+ */
+export async function runSingleModelDraft(
+  providerKey: ProviderKey,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<DraftResult> {
+  return runSingleModel(providerKey, systemPrompt, userPrompt);
+}
+
+/**
+ * Run a revision: same model revises based on attorney feedback.
+ */
+export async function runRevision(
+  providerKey: ProviderKey,
+  systemPrompt: string,
+  currentContent: string,
+  feedback: string,
+): Promise<DraftResult> {
+  const revisionPrompt = `You previously drafted the following document. The attorney has reviewed it and provided feedback. Please revise the document based on the feedback below.\n\n## Current Draft\n\n${currentContent}\n\n## Attorney Feedback\n\n${feedback}\n\nPlease produce the complete revised document.`;
+
+  try {
+    const content = await callProvider(providerKey, systemPrompt, revisionPrompt);
+    const provider = ENABLED_PROVIDERS.find(p => p.key === providerKey) ||
+      { key: providerKey, name: providerKey };
+    return {
+      provider: provider.key,
+      providerLabel: provider.name,
+      content,
+    };
+  } catch (err: any) {
+    return {
+      provider: providerKey,
+      providerLabel: providerKey,
+      content: "",
+      error: err.message || "Unknown error",
+    };
+  }
+}
+
+// ── Review Cycle (full_competitive only) ────────────────────────────
+
+/**
+ * Run review cycle: each enabled provider reviews the selected draft.
  */
 export async function runReviewCycle(
   systemPrompt: string,
@@ -316,16 +377,14 @@ export async function runReviewCycle(
         reviewerPrompt,
         userPrompt,
         8192,
-        true, // JSON mode for structured review output
+        true,
       );
 
       let points: Array<{ category: string; point: string }> = [];
       try {
-        // Try to parse as JSON first
         const parsed = JSON.parse(content);
         points = parsed.points || [];
       } catch {
-        // If JSON parsing fails, try to extract JSON from the response
         const jsonMatch = content.match(/\{[\s\S]*"points"[\s\S]*\}/);
         if (jsonMatch) {
           try {
@@ -350,4 +409,69 @@ export async function runReviewCycle(
   });
 
   return Promise.all(promises);
+}
+
+// ── Claude Formatting Pass ──────────────────────────────────────────
+
+/**
+ * Run the Claude formatting pass on the locked substantive version.
+ * Always uses Claude regardless of which model drafted the document.
+ * Returns formatted content and any flagged issues.
+ */
+export async function runFormattingPass(
+  substantiveContent: string,
+  adjustmentNotes?: string,
+): Promise<FormattingResult> {
+  const systemPrompt = FORMATTING_PASS_PROMPT;
+
+  let userPrompt = `Please apply the formatting pass to the following document:\n\n${substantiveContent}`;
+
+  if (adjustmentNotes) {
+    userPrompt += `\n\n## Formatting Adjustment Notes\n\nThe attorney has requested the following formatting adjustments:\n${adjustmentNotes}`;
+  }
+
+  // Always call Claude for formatting, using its master prompt
+  const content = await callProvider("claude", systemPrompt, userPrompt, 16384, false);
+
+  // Parse flags from Claude's response
+  const flags = parseFormattingFlags(content);
+
+  return { content, flags };
+}
+
+/**
+ * Parse flagged items from Claude's formatting response.
+ * Looks for clearly identifiable flag sections.
+ * If no clear flags are found, returns empty array (per user requirement:
+ * do not infer flags from ambiguous text).
+ */
+export function parseFormattingFlags(content: string): string[] {
+  const flags: string[] = [];
+
+  // Look for explicit flag sections with common patterns
+  const flagPatterns = [
+    /(?:^|\n)(?:##?\s*)?(?:flags?|issues?\s+flagged|substantive\s+issues?|flagged\s+items?)[\s:]*\n([\s\S]*?)(?=\n##|\n---|\Z)/im,
+    /(?:^|\n)(?:##?\s*)?(?:issues?\s+noticed|concerns?|open\s+decisions?)[\s:]*\n([\s\S]*?)(?=\n##|\n---|\Z)/im,
+  ];
+
+  for (const pattern of flagPatterns) {
+    const match = content.match(pattern);
+    if (match && match[1]) {
+      const section = match[1].trim();
+      // Extract bullet points
+      const bullets = section.split(/\n/).filter(line => {
+        const trimmed = line.trim();
+        return trimmed.startsWith("•") || trimmed.startsWith("-") || trimmed.startsWith("*") || /^\d+\./.test(trimmed);
+      });
+
+      for (const bullet of bullets) {
+        const cleaned = bullet.replace(/^[\s•\-\*\d.]+/, "").trim();
+        if (cleaned.length > 10) { // Only include substantive flags
+          flags.push(cleaned);
+        }
+      }
+    }
+  }
+
+  return flags;
 }
