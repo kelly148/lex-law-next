@@ -128,3 +128,9 @@
 - [x] Disable Start Phase if no pending and no previously uploaded files (note: Start Phase is always enabled per spec)
 - [x] Apply to ALL phases that accept source materials (not just intake)
 - [x] Start Phase button always enabled regardless of file/context state (intentional — attorney may start without source materials)
+
+## PDF Extraction Bug Fix
+- [x] Diagnose why PDF files are not being extracted — root cause: frontend was passing file URL list as sourceContent instead of letting server extract files
+- [x] Fix PDF extraction: removed buildSourceContent() from frontend; server now always calls buildSourceContentFromUploads() independently
+- [x] Test PDF extraction end-to-end: pdftotext confirmed working with real PDF (poppler-utils v22.02.0)
+- [x] Update vitest tests for PDF extraction fix — 104 tests passing

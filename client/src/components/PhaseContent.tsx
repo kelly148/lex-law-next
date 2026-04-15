@@ -129,24 +129,11 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
     });
   };
 
-  // Build source content string from uploaded files + manual context
-  // The server will receive file URLs and context text; the LLM will use them
-  const buildSourceContent = (): string | undefined => {
-    const uploads = uploadsQuery.data ?? [];
-    const parts: string[] = [];
-
-    if (uploads.length > 0) {
-      const fileList = uploads.map((u: any) =>
-        `File: ${u.fileName}\nURL: ${u.fileUrl}`
-      ).join("\n\n");
-      parts.push(`UPLOADED DOCUMENTS:\n${fileList}`);
-    }
-
-    if (context.trim()) {
-      parts.push(`ADDITIONAL CONTEXT:\n${context.trim()}`);
-    }
-
-    return parts.length > 0 ? parts.join("\n\n---\n\n") : undefined;
+  // Only pass manual context text typed by the attorney.
+  // The server independently fetches and extracts uploaded files from the DB
+  // via buildSourceContentFromUploads() in selectModel / startCompetitiveDraft.
+  const getManualContext = (): string | undefined => {
+    return context.trim() || undefined;
   };
 
   // ── Waiting on Client ──
@@ -194,7 +181,7 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
           matterId,
           phaseName: phase.phaseName,
           context: context || undefined,
-          sourceContent: buildSourceContent(),
+          sourceContent: getManualContext(),
           workflowModeOverride: (modeOverride && modeOverride !== config.defaultMode)
             ? modeOverride as any
             : undefined,
@@ -317,7 +304,7 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
         matterId={matterId}
         phaseName={phase.phaseName}
         phaseLabel={config.label}
-        sourceContent={buildSourceContent()}
+        sourceContent={getManualContext()}
         context={context || undefined}
         onRefresh={onRefresh}
       />
