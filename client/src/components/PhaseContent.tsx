@@ -214,6 +214,39 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
           )}
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Prior phase context notice for Final Legal Document */}
+          {phaseName === "agreement" && (() => {
+            const completedPriors = allPhases.filter(
+              (p) => p.phaseName !== "agreement" && p.status === "completed"
+            );
+            const incompletePriors = allPhases.filter(
+              (p) => p.phaseName !== "agreement" && p.status !== "completed" && p.status !== "skipped"
+            );
+            return (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-blue-800 font-medium text-sm">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Final Legal Document — Direct Access
+                </div>
+                {completedPriors.length > 0 ? (
+                  <p className="text-sm text-blue-700">
+                    The following completed phase outputs will be automatically included as source material:
+                    {" "}<span className="font-medium">{completedPriors.map(p => PHASE_CONFIG[p.phaseName as PhaseName]?.label ?? p.phaseName).join(", ")}</span>.
+                  </p>
+                ) : (
+                  <p className="text-sm text-blue-700">
+                    No prior phases are complete yet. You may upload source documents below or proceed directly.
+                  </p>
+                )}
+                {incompletePriors.length > 0 && (
+                  <p className="text-xs text-blue-600">
+                    Not included (not yet complete): {incompletePriors.map(p => PHASE_CONFIG[p.phaseName as PhaseName]?.label ?? p.phaseName).join(", ")}.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Source Materials — FileDropZone for ALL phases */}
           <div className="space-y-2">
             <Label>Source Materials</Label>

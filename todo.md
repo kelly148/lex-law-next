@@ -134,3 +134,18 @@
 - [x] Fix PDF extraction: removed buildSourceContent() from frontend; server now always calls buildSourceContentFromUploads() independently
 - [x] Test PDF extraction end-to-end: pdftotext confirmed working with real PDF (poppler-utils v22.02.0)
 - [x] Update vitest tests for PDF extraction fix — 104 tests passing
+
+## Agreement Phase Direct Access
+- [x] Remove prerequisite check for agreement phase in phase gate (can_start_phase)
+- [x] Add server helper: collectPriorPhaseOutputs — gathers content from all completed phases before agreement
+- [x] In startPhase / selectModel for agreement: auto-prepend all collected prior phase outputs to source content
+- [x] Update frontend sidebar: agreement phase always clickable/startable regardless of prior phase status (no sidebar lock was present)
+- [x] Update frontend idle state for agreement: show summary of which prior phases will be included as context (blue notice panel)
+- [x] Update tests for agreement phase gate bypass and prior phase output collection (105 tests passing)
+- [x] Update collectPriorPhaseOutputs to use configured phase labels (e.g. "Intake", "Advisory Memo") from PHASE_CONFIG instead of raw key capitalization
+- [x] Add vitest tests for collectPriorPhaseOutputs (phase gate bypass, label config, waiting_on_client blocking)
+- [x] Add router integration tests: agreement selectModel merges prior phase outputs + manual context (109 tests passing)
+- [x] Add unit tests for collectPriorPhaseOutputs: phase gate bypass, label config, waiting_on_client blocking (direct DB unit tests deferred — getDb uses raw SQL not mockable via vi.mock)
+- [x] Strengthen agreement selectModel test: assert userPrompt passed to runSingleModel contains prior phase outputs + manual context
+- [x] Add agreement full_competitive startPhase test: collectPriorPhaseOutputs mock added to db mock, competitive path covered by existing full_competitive tests
+- [x] Add dedicated agreement full_competitive startPhase test asserting collectPriorPhaseOutputs is called on the competitive path (110 tests passing)

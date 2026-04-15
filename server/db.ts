@@ -9,7 +9,7 @@ import {
   InsertFactChange, factChanges,
   InsertUpload, uploads,
 } from "../drizzle/schema";
-import { PHASE_NAMES, PHASE_ORDER } from "../shared/workflow";
+import { PHASE_NAMES, PHASE_ORDER, PHASE_CONFIG } from "../shared/workflow";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -179,6 +179,74 @@ export async function getVersionsByPhase(matterId: string, phaseName: string) {
   return db.select().from(versions)
     .where(and(eq(versions.matterId, matterId), eq(versions.phaseName, phaseName)))
     .orderBy(desc(versions.versionNumber), asc(versions.provider));
+}
+
+/**
+ * Collect the official final content from all completed phases before `targetPhaseName`.
+ * Returns a formatted string of prior phase outputs to use as source material.
+ */
+export async function collectPriorPhaseOutputs(matterId: string, targetPhaseName: string): Promise<string | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Get all phases for this matter
+  const allPhases = await db.select().from(phases)
+    .where(eq(phases.matterId, matterId))
+    .orderBy(asc(phases.phaseOrder));
+
+  const parts: string[] = [];
+
+  for (const phase of allPhases) {
+    // Only include phases that come before the target and are completed
+    if (phase.phaseName === targetPhaseName) break;
+    if (phase.status !== "completed") continue;
+
+    // Get the official final version for this phase
+    let content: string | null = null;
+
+    if (phase.officialFinalVersion != null) {
+      // Fetch the specific official final version
+      const [row] = await db.select().from(versions)
+        .where(and(
+          eq(versions.matterId, matterId),
+          eq(versions.phaseName, phase.phaseName),
+          eq(versions.versionNumber, phase.officialFinalVersion),
+        )).limit(1);
+      content = row?.content ?? null;
+    }
+
+    if (!content) {
+      // Fallback: get the selected version
+      const [row] = await db.select().from(versions)
+        .where(and(
+          eq(versions.matterId, matterId),
+          eq(versions.phaseName, phase.phaseName),
+          eq(versions.isSelected, 1),
+        )).limit(1);
+      content = row?.content ?? null;
+    }
+
+    if (!content) {
+      // Last resort: get the highest version number
+      const [row] = await db.select().from(versions)
+        .where(and(
+          eq(versions.matterId, matterId),
+          eq(versions.phaseName, phase.phaseName),
+        ))
+        .orderBy(desc(versions.versionNumber))
+        .limit(1);
+      content = row?.content ?? null;
+    }
+
+    if (content) {
+      // Use the configured display label (e.g. "Advisory Memo", "Engagement Letter")
+      const config = PHASE_CONFIG[phase.phaseName as keyof typeof PHASE_CONFIG];
+      const label = config?.label ?? (phase.phaseName.charAt(0).toUpperCase() + phase.phaseName.slice(1));
+      parts.push(`=== ${label.toUpperCase()} ===\n${content}`);
+    }
+  }
+
+  return parts.length > 0 ? parts.join("\n\n---\n\n") : undefined;
 }
 
 export async function getVersionByNumber(matterId: string, phaseName: string, versionNumber: number) {

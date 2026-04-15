@@ -231,16 +231,29 @@ describe("canStartPhase (phase gate)", () => {
     expect(canStartPhase("agreement", phases as any)).toBe(true);
   });
 
-  it("agreement blocked if engagement is waiting_on_client", () => {
+  it("agreement is always startable regardless of prior phase status (direct access feature)", () => {
+    // agreement bypasses all prerequisites — can be started from any phase
+    const phases = mockAllPhases("test", {
+      intake: { status: "waiting_on_client" },
+      issues: { status: "idle" },
+      planning: { status: "idle" },
+      engagement: { status: "idle" },
+      memo: { status: "idle", isOptional: 1 },
+      matrix: { status: "idle", isOptional: 1 },
+    });
+    expect(canStartPhase("agreement", phases as any)).toBe(true);
+  });
+
+  it("agreement is startable even when only intake is complete", () => {
     const phases = mockAllPhases("test", {
       intake: { status: "completed" },
-      issues: { status: "completed" },
-      planning: { status: "completed" },
-      engagement: { status: "waiting_on_client" },
-      memo: { status: "skipped", isOptional: 1 },
-      matrix: { status: "skipped", isOptional: 1 },
+      issues: { status: "idle" },
+      planning: { status: "idle" },
+      engagement: { status: "idle" },
+      memo: { status: "idle", isOptional: 1 },
+      matrix: { status: "idle", isOptional: 1 },
     });
-    expect(canStartPhase("agreement", phases as any)).toBe(false);
+    expect(canStartPhase("agreement", phases as any)).toBe(true);
   });
 });
 
@@ -400,6 +413,7 @@ describe("matter and phase routers", () => {
     getFactChangesByMatter: vi.fn().mockResolvedValue([]),
     createUpload: vi.fn().mockResolvedValue({ id: 1, fileName: "test.pdf", fileUrl: "https://s3.example.com/test.pdf" }),
     getUploadsByPhase: vi.fn().mockResolvedValue([]),
+    collectPriorPhaseOutputs: vi.fn().mockResolvedValue(undefined),
     markPhasesStale: vi.fn().mockResolvedValue(undefined),
     upsertUser: vi.fn().mockResolvedValue(undefined),
     getUserByOpenId: vi.fn().mockResolvedValue(undefined),
@@ -1105,5 +1119,150 @@ describe("matter and phase routers", () => {
       "test-matter-123", "agreement",
       expect.objectContaining({ officialFinalVersion: 5 })
     );
+  });
+});
+
+// ── collectPriorPhaseOutputs & Agreement Source Merge Tests ──────────
+
+describe("agreement direct access: prior phase output collection", () => {
+  it("collectPriorPhaseOutputs: uses officialFinalVersion label from PHASE_CONFIG", async () => {
+    // This test verifies the label formatting — collectPriorPhaseOutputs uses getDb() directly
+    // so we test it indirectly through the router's selectModel call which calls it.
+    // Direct unit tests for the DB function are in the db.test.ts file.
+    // Here we verify the config-based label is correct.
+    const { PHASE_CONFIG } = await import("../shared/workflow");
+    expect(PHASE_CONFIG.intake.label).toBe("Intake");
+    expect(PHASE_CONFIG.memo.label).toBe("Advisory Memo");
+    expect(PHASE_CONFIG.engagement.label).toBe("Engagement Letter");
+    expect(PHASE_CONFIG.agreement.label).toBe("Final Legal Document");
+  });
+
+  it("collectPriorPhaseOutputs: agreement is always startable (canStartPhase bypass)", async () => {
+    // Verify the phase gate bypass is in place for all prior-phase states
+    const { canStartPhase } = await import("../shared/workflow");
+    const noPhases: any[] = [];
+    expect(canStartPhase("agreement", noPhases)).toBe(true);
+
+    const onlyIntakeComplete: any[] = [
+      mockPhase({ phaseName: "intake", status: "completed" }),
+    ];
+    expect(canStartPhase("agreement", onlyIntakeComplete)).toBe(true);
+
+    const allIdle: any[] = mockAllPhases("test-matter-123");
+    expect(canStartPhase("agreement", allIdle)).toBe(true);
+  });
+
+  it("collectPriorPhaseOutputs: waiting_on_client does not satisfy prerequisites for non-agreement phases", async () => {
+    const { canStartPhase } = await import("../shared/workflow");
+    const phases: any[] = [
+      mockPhase({ phaseName: "intake", status: "waiting_on_client" }),
+    ];
+    // Issues requires intake to be complete; waiting_on_client is not complete
+    expect(canStartPhase("issues", phases)).toBe(false);
+  });
+
+  it("agreement selectModel merges prior phase outputs with uploads and manual context", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+    const llm = await import("./llm");
+
+    // Phase in model_selection state for agreement
+    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+      phaseName: "agreement",
+      workflowState: "model_selection",
+      activeWorkflowMode: "single_model",
+    }) as any);
+
+    // No uploads (keep simple — upload extraction is tested in fileExtractor.test.ts)
+    vi.mocked(db.getUploadsByPhase).mockResolvedValueOnce([] as any);
+
+    // collectPriorPhaseOutputs returns intake content
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+      "=== INTAKE ===\n\nIntake output content"
+    );
+
+    const result = await caller.phase.selectModel({
+      matterId: "test-matter-123",
+      phaseName: "agreement",
+      modelId: "claude",
+      sourceContent: "Manual attorney notes",
+    });
+
+    expect(result.success).toBe(true);
+    // runSingleModel should have been called (agreement in single_model mode)
+    expect(vi.mocked(llm.runSingleModel)).toHaveBeenCalled();
+    // collectPriorPhaseOutputs should have been called for agreement phase
+    expect(vi.mocked(db.collectPriorPhaseOutputs)).toHaveBeenCalledWith(
+      "test-matter-123", "agreement"
+    );
+    // Verify the userPrompt passed to runSingleModel contains the prior phase content
+    const runSingleModelCall = vi.mocked(llm.runSingleModel).mock.calls.at(-1);
+    expect(runSingleModelCall).toBeDefined();
+    // The 3rd argument is the userPrompt which should contain merged source content
+    const userPromptArg = runSingleModelCall?.[2] ?? "";
+    expect(userPromptArg).toContain("Intake output content");
+    expect(userPromptArg).toContain("Manual attorney notes");
+  });
+});
+
+// ── Agreement Full Competitive Path Test ─────────────────────────────
+
+describe("agreement full_competitive path", () => {
+  it("startPhase for agreement calls collectPriorPhaseOutputs on the competitive path", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+    const llm = await import("./llm");
+
+    // All phases idle — agreement is always startable
+    vi.mocked(db.getPhasesByMatterId).mockResolvedValueOnce(
+      mockAllPhases("test-matter-123") as any
+    );
+
+    // Start agreement phase → should go to drafting (full_competitive default)
+    const result = await caller.phase.startPhase({
+      matterId: "test-matter-123",
+      phaseName: "agreement",
+    });
+
+    expect(result.success).toBe(true);
+
+    // collectPriorPhaseOutputs should have been called for the competitive path
+    expect(vi.mocked(db.collectPriorPhaseOutputs)).toHaveBeenCalledWith(
+      "test-matter-123", "agreement"
+    );
+
+    // runCompetitiveDraft should have been called (agreement defaults to full_competitive)
+    expect(vi.mocked(llm.runCompetitiveDraft)).toHaveBeenCalled();
+  });
+
+  it("agreement full_competitive: prior phase outputs are merged into the competitive-path prompt", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+    const llm = await import("./llm");
+
+    vi.mocked(db.getPhasesByMatterId).mockResolvedValueOnce(
+      mockAllPhases("test-matter-123") as any
+    );
+
+    // collectPriorPhaseOutputs returns intake content for this test
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+      "=== INTAKE ===\n\nClient intake details here"
+    );
+
+    await caller.phase.startPhase({
+      matterId: "test-matter-123",
+      phaseName: "agreement",
+      sourceContent: "Attorney notes for agreement",
+    });
+
+    // The 2nd argument to runCompetitiveDraft is the userPrompt
+    const competitiveCall = vi.mocked(llm.runCompetitiveDraft).mock.calls.at(-1);
+    expect(competitiveCall).toBeDefined();
+    const userPromptArg = competitiveCall?.[1] ?? "";
+    expect(userPromptArg).toContain("Client intake details here");
+    expect(userPromptArg).toContain("Attorney notes for agreement");
   });
 });

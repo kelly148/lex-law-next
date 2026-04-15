@@ -13,6 +13,7 @@ import {
   createFeedbackBatch, getFeedbackByPhase, updateFeedbackDecision,
   createFactChange, getFactChangesByMatter,
   createUpload, getUploadsByPhase,
+  collectPriorPhaseOutputs,
 } from "./db";
 import { storagePut } from "./storage";
 import { buildSourceContentFromUploads } from "./fileExtractor";
@@ -229,8 +230,14 @@ const phaseRouter = router({
         ? await buildSourceContentFromUploads(uploads as any, input.context)
         : undefined;
 
-      // Use extracted file content if available, otherwise fall back to passed sourceContent
-      const effectiveSource = extractedSource || input.sourceContent;
+      // For the Final Legal Document, also collect all completed prior phase outputs
+      const priorPhaseContent = phaseName === "agreement"
+        ? await collectPriorPhaseOutputs(input.matterId, "agreement")
+        : undefined;
+
+      // Merge: prior phase outputs + extracted file content + manual sourceContent
+      const sourceParts = [priorPhaseContent, extractedSource, input.sourceContent].filter(Boolean);
+      const effectiveSource = sourceParts.length > 0 ? sourceParts.join("\n\n---\n\n") : undefined;
       const userPrompt = buildUserPrompt(phaseName, effectiveSource, input.context);
 
       if (activeMode === "single_model") {
@@ -693,7 +700,15 @@ async function startCompetitiveDraft(
   const extractedSource = uploads.length > 0
     ? await buildSourceContentFromUploads(uploads as any, context)
     : undefined;
-  const effectiveSource = extractedSource || sourceContent;
+
+  // For the Final Legal Document, also collect all completed prior phase outputs
+  const priorPhaseContent = phaseName === "agreement"
+    ? await collectPriorPhaseOutputs(matterId, "agreement")
+    : undefined;
+
+  // Merge: prior phase outputs + extracted file content + manual sourceContent
+  const sourceParts = [priorPhaseContent, extractedSource, sourceContent].filter(Boolean);
+  const effectiveSource = sourceParts.length > 0 ? sourceParts.join("\n\n---\n\n") : undefined;
   const userPrompt = buildUserPrompt(phaseName, effectiveSource, context);
 
   try {

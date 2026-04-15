@@ -206,6 +206,10 @@ export function canStartPhase(
   const config = PHASE_CONFIG[phaseName];
   if (!config) return false;
 
+  // The Final Legal Document (agreement) can always be started from any phase.
+  // It auto-collects all completed prior phase outputs as source material.
+  if (phaseName === "agreement") return true;
+
   // Check all prior phases
   for (const prior of PHASE_NAMES) {
     if (PHASE_ORDER[prior] >= PHASE_ORDER[phaseName]) break;
