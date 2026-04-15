@@ -6,7 +6,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import {
-  createMatter, listMatters, getMatterByMatterId,
+  createMatter, listMatters, getMatterByMatterId, renameMatter,
   createPhases, getPhasesByMatterId, getPhase, updatePhaseWorkflowState,
   updatePhaseFields, setPhaseStatus, skipPhase,
   createVersion, getVersionsByPhase, getVersionByNumber, selectVersion, getLatestVersionNumber,
@@ -48,6 +48,7 @@ function buildUserPrompt(phaseName: PhaseName, sourceContent?: string, context?:
 const matterRouter = router({
   create: protectedProcedure
     .input(z.object({
+      matterName: z.string().min(1, "Matter name is required").max(512),
       jurisdiction: z.string().min(1),
       workflowPath: z.enum(["full", "core_only"]).default("full"),
     }))
@@ -55,6 +56,7 @@ const matterRouter = router({
       const matterId = nanoid(12);
       const matter = await createMatter({
         matterId,
+        matterName: input.matterName,
         jurisdiction: input.jurisdiction,
         workflowPath: input.workflowPath,
         createdBy: ctx.user.id,
@@ -85,6 +87,17 @@ const matterRouter = router({
       if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
       const matterPhases = await getPhasesByMatterId(input.matterId);
       return { matter, phases: matterPhases };
+    }),
+
+  rename: protectedProcedure
+    .input(z.object({
+      matterId: z.string(),
+      matterName: z.string().min(1, "Matter name is required").max(512),
+    }))
+    .mutation(async ({ input }) => {
+      const matter = await getMatterByMatterId(input.matterId);
+      if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
+      return renameMatter(input.matterId, input.matterName);
     }),
 });
 

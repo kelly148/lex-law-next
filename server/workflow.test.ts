@@ -326,25 +326,32 @@ describe("protected routes reject unauthenticated requests", () => {
 describe("matter and phase routers", () => {
   vi.mock("./db", () => ({
     createMatter: vi.fn().mockResolvedValue({
-      id: 1, matterId: "test-matter-123", jurisdiction: "Virginia — Fairfax County",
+      id: 1, matterId: "test-matter-123", matterName: "Test Matter", jurisdiction: "Virginia — Fairfax County",
       workflowPath: "full", status: "active", createdBy: 1,
       createdAt: new Date(), updatedAt: new Date(),
     }),
     listMatters: vi.fn().mockResolvedValue([{
-      id: 1, matterId: "test-matter-123", jurisdiction: "Virginia — Fairfax County",
+      id: 1, matterId: "test-matter-123", matterName: "Test Matter", jurisdiction: "Virginia — Fairfax County",
       workflowPath: "full", status: "active", createdBy: 1,
       createdAt: new Date(), updatedAt: new Date(),
     }]),
     getMatterByMatterId: vi.fn().mockImplementation((matterId: string) => {
       if (matterId === "test-matter-123") {
         return Promise.resolve({
-          id: 1, matterId: "test-matter-123", jurisdiction: "Virginia — Fairfax County",
+          id: 1, matterId: "test-matter-123", matterName: "Test Matter", jurisdiction: "Virginia — Fairfax County",
           workflowPath: "full", status: "active", createdBy: 1,
           createdAt: new Date(), updatedAt: new Date(),
         });
       }
       return Promise.resolve(null);
     }),
+    renameMatter: vi.fn().mockImplementation((matterId: string, matterName: string) =>
+      Promise.resolve({
+        id: 1, matterId, matterName, jurisdiction: "Virginia — Fairfax County",
+        workflowPath: "full", status: "active", createdBy: 1,
+        createdAt: new Date(), updatedAt: new Date(),
+      })
+    ),
     createPhases: vi.fn().mockImplementation((data: any[]) => {
       return Promise.resolve(data.map((d, i) => mockPhase({
         id: i + 1,
@@ -438,6 +445,7 @@ describe("matter and phase routers", () => {
     const { ctx } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const result = await caller.matter.create({
+      matterName: "Test Matter",
       jurisdiction: "Virginia — Fairfax County",
       workflowPath: "full",
     });

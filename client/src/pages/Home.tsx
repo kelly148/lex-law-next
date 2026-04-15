@@ -18,6 +18,7 @@ import { toast } from "sonner";
 export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
+  const [matterName, setMatterName] = useState("");
   const [jurisdiction, setJurisdiction] = useState("");
   const [workflowPath, setWorkflowPath] = useState<"full" | "core_only">("full");
 
@@ -26,6 +27,7 @@ export default function Home() {
     onSuccess: (data) => {
       toast.success("Matter created");
       mattersQuery.refetch();
+      setMatterName("");
       setJurisdiction("");
       setLocation(`/matters/${data.matter.matterId}`);
     },
@@ -108,10 +110,21 @@ export default function Home() {
               className="space-y-4"
               onSubmit={(e) => {
                 e.preventDefault();
+                if (!matterName.trim()) { toast.error("Matter name is required"); return; }
                 if (!jurisdiction.trim()) { toast.error("Jurisdiction is required"); return; }
-                createMatter.mutate({ jurisdiction: jurisdiction.trim(), workflowPath });
+                createMatter.mutate({ matterName: matterName.trim(), jurisdiction: jurisdiction.trim(), workflowPath });
               }}
             >
+              <div className="space-y-2">
+                <Label htmlFor="matterName">Matter Name</Label>
+                <Input
+                  id="matterName"
+                  placeholder="e.g. Kinsey Property Purchase"
+                  value={matterName}
+                  onChange={(e) => setMatterName(e.target.value)}
+                  required
+                />
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="jurisdiction">Jurisdiction</Label>
                 <Input
@@ -167,7 +180,7 @@ export default function Home() {
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium truncate">{m.matterId}</span>
+                        <span className="font-medium truncate">{m.matterName || m.matterId}</span>
                         <Badge variant={m.status === "active" ? "default" : "secondary"} className="text-xs shrink-0">
                           {m.status}
                         </Badge>

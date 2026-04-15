@@ -1,0 +1,1 @@
+ALTER TABLE `matters` ADD `matterName` varchar(512) DEFAULT '' NOT NULL;

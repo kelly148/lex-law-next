@@ -106,3 +106,14 @@
 - [x] Fix document uploads not being read/used in intake phase (server-side PDF/DOCX/TXT extraction via fileExtractor.ts)
 - [x] Add vitest tests for fileExtractor.ts (PDF, DOCX, TXT, error cases) — 17 tests passing
 - [x] Verify end-to-end intake upload flow: uploaded docs appear in model prompts (buildSourceContentFromUploads called in selectModel and startCompetitiveDraft)
+
+## Matter Naming
+- [x] Add matterName column to matters table in drizzle/schema.ts
+- [x] Generate and apply migration SQL for matterName column
+- [x] Update createMatter DB helper to accept and store matterName
+- [x] Update matter.create tRPC procedure to require matterName input
+- [x] Add matter.rename tRPC procedure for editing name after creation
+- [x] Update matter list to display matterName instead of matterId
+- [x] Add matterName field to New Matter creation form (required)
+- [x] Display matterName in matter detail page header
+- [x] Allow inline rename from matter detail page header

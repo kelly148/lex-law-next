@@ -7,11 +7,13 @@ import {
   PHASE_CONFIG, PHASE_NAMES, OPTIONAL_PHASES, STAGE_LABELS,
   type PhaseName, type WorkflowState, type Stage,
 } from "@shared/workflow";
+import { Input } from "@/components/ui/input";
 import {
   ArrowLeft, AlertTriangle, CheckCircle2, Loader2, Clock,
-  CircleDot, CircleSlash, CircleDashed,
+  CircleDot, CircleSlash, CircleDashed, Pencil, Check, X,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 import PhaseContent from "@/components/PhaseContent";
 import FactChangePanel from "@/components/FactChangePanel";
@@ -70,6 +72,13 @@ export default function MatterPage() {
   const [, setLocation] = useLocation();
   const [selectedPhase, setSelectedPhase] = useState<PhaseName>("intake");
   const [showFactChange, setShowFactChange] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+
+  const renameMatter = trpc.matter.rename.useMutation({
+    onSuccess: () => { matterQuery.refetch(); setEditingName(false); },
+    onError: (err) => { toast.error(err.message); },
+  });
 
   const matterQuery = trpc.matter.get.useQuery(
     { matterId: params.matterId },
@@ -146,7 +155,49 @@ export default function MatterPage() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="font-serif text-2xl font-bold text-primary">Matter {matter.matterId}</h1>
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  className="h-8 text-xl font-serif font-bold text-primary w-72"
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && nameInput.trim()) {
+                      renameMatter.mutate({ matterId: matter.matterId, matterName: nameInput.trim() });
+                    } else if (e.key === "Escape") {
+                      setEditingName(false);
+                    }
+                  }}
+                  autoFocus
+                />
+                <Button
+                  size="icon" variant="ghost" className="h-7 w-7 text-green-600"
+                  disabled={!nameInput.trim() || renameMatter.isPending}
+                  onClick={() => renameMatter.mutate({ matterId: matter.matterId, matterName: nameInput.trim() })}
+                >
+                  <Check className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground"
+                  onClick={() => setEditingName(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 group">
+                <h1 className="font-serif text-2xl font-bold text-primary">
+                  {matter.matterName || matter.matterId}
+                </h1>
+                <Button
+                  size="icon" variant="ghost"
+                  className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => { setNameInput(matter.matterName || ""); setEditingName(true); }}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground">
               {matter.jurisdiction} &middot; {matter.workflowPath === "full" ? "Full Workflow" : "Core Only"} &middot; {completedCount}/{phases.length} phases
             </p>
