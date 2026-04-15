@@ -1,0 +1,22 @@
+# Lex Law Next — Project TODO
+
+- [x] MySQL/Drizzle schema: matters, phases, versions, feedback, fact_changes tables
+- [x] Global theming: Navy #1F3864 primary, #2E75B6 accent, Garamond serif headings
+- [x] Manus OAuth authentication with protected routes
+- [x] tRPC procedures: create matter, list matters, get matter detail
+- [x] tRPC procedures: phase workflow transitions (startDrafting, selectDraft, submitDecisions, skip, completeManually)
+- [x] tRPC procedures: record fact change with affected phase stale marking
+- [x] Multi-provider LLM competitive drafting via invokeLLM with provider personas
+- [x] 7-phase definitions: Intake, Issues, Planning, Engagement Letter, Advisory Memo (opt), Decision Matrix (opt), Agreement
+- [x] Phase state enum: idle, drafting, awaiting_selection, reviewing, evaluating, awaiting_decisions, regenerating, complete
+- [x] File upload via Manus S3 storage
+- [x] Persist uploaded file URLs in database (uploads table)
+- [x] Downstream stale-marking based on phase order (not just caller-supplied phases)
+- [x] Dashboard with matter list, new matter form (jurisdiction + workflow path), LLM provider status
+- [x] Matter detail page with phase sidebar, phase content area
+- [x] Draft comparison view with provider tabs for attorney selection
+- [x] Attorney review panel with accept/reject/modify decisions per feedback point
+- [x] Fact change panel with description and affected phase selection
+- [x] Phase completion view with re-run and stale warnings
+- [x] Vitest tests for tRPC procedures and workflow logic (37 tests passing)
+- [ ] SSE/polling for real-time workflow progress updates (deferred — uses query invalidation)
