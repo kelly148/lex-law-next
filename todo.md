@@ -100,3 +100,9 @@
 - [x] test_agreement_mode_lock (reject non-full_competitive for agreement)
 - [x] test_official_final_version_recorded (all modes)
 - [x] All existing tests still pass (83 tests, 4 test files)
+
+## Bug Fixes
+- [x] Fix React error #310 (conditional hook call) after selecting model in intake
+- [x] Fix document uploads not being read/used in intake phase (server-side PDF/DOCX/TXT extraction via fileExtractor.ts)
+- [x] Add vitest tests for fileExtractor.ts (PDF, DOCX, TXT, error cases) — 17 tests passing
+- [x] Verify end-to-end intake upload flow: uploaded docs appear in model prompts (buildSourceContentFromUploads called in selectModel and startCompetitiveDraft)

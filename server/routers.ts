@@ -15,6 +15,7 @@ import {
   createUpload, getUploadsByPhase,
 } from "./db";
 import { storagePut } from "./storage";
+import { buildSourceContentFromUploads } from "./fileExtractor";
 import {
   runSingleModel, runCompetitiveDraft, runSingleModelDraft,
   runRevision, runReviewCycle, runFormattingPass,
@@ -208,7 +209,16 @@ const phaseRouter = router({
 
       const prompt = PHASE_PROMPTS[phaseName];
       if (!prompt) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid phase name" });
-      const userPrompt = buildUserPrompt(phaseName, input.sourceContent, input.context);
+
+      // Fetch uploaded files and extract their text content for the LLM
+      const uploads = await getUploadsByPhase(input.matterId, input.phaseName);
+      const extractedSource = uploads.length > 0
+        ? await buildSourceContentFromUploads(uploads as any, input.context)
+        : undefined;
+
+      // Use extracted file content if available, otherwise fall back to passed sourceContent
+      const effectiveSource = extractedSource || input.sourceContent;
+      const userPrompt = buildUserPrompt(phaseName, effectiveSource, input.context);
 
       if (activeMode === "single_model") {
         // Processing state
@@ -664,7 +674,14 @@ async function startCompetitiveDraft(
 
   const prompt = PHASE_PROMPTS[phaseName];
   if (!prompt) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid phase name" });
-  const userPrompt = buildUserPrompt(phaseName, sourceContent, context);
+
+  // Fetch and extract uploaded files for this phase
+  const uploads = await getUploadsByPhase(matterId, phaseName);
+  const extractedSource = uploads.length > 0
+    ? await buildSourceContentFromUploads(uploads as any, context)
+    : undefined;
+  const effectiveSource = extractedSource || sourceContent;
+  const userPrompt = buildUserPrompt(phaseName, effectiveSource, context);
 
   try {
     const drafts = await runCompetitiveDraft(prompt.system, userPrompt, context);

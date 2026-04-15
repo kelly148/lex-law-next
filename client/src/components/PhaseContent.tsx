@@ -59,6 +59,19 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
 
+  // ── All hooks must be called unconditionally ──────────────────────
+  // This query is used in the "complete" state but must be at the top level
+  const phaseDetailQuery = trpc.phase.get.useQuery(
+    { matterId, phaseName: phase.phaseName },
+    { enabled: ws === "complete" }
+  );
+
+  // Fetch uploaded files for this phase (used to pass to LLM as source content)
+  const uploadsQuery = trpc.upload.listByPhase.useQuery(
+    { matterId, phaseName: phase.phaseName },
+    { enabled: phaseName === "intake" }
+  );
+
   const startPhase = trpc.phase.startPhase.useMutation({
     onSuccess: (data) => {
       if ("workflowState" in data && data.workflowState === "model_selection") {
@@ -90,6 +103,8 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
     onSuccess: (data) => {
       toast.success(`Uploaded: ${data.fileName}`);
       setUploadedFiles(prev => [...prev, data.fileName]);
+      // Refresh uploads list so they're available when starting the phase
+      uploadsQuery.refetch();
     },
     onError: (err) => toast.error(err.message),
   });
@@ -112,6 +127,26 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
       reader.readAsDataURL(file);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // Build source content string from uploaded files + manual context
+  // The server will receive file URLs and context text; the LLM will use them
+  const buildSourceContent = (): string | undefined => {
+    const uploads = uploadsQuery.data ?? [];
+    const parts: string[] = [];
+
+    if (uploads.length > 0) {
+      const fileList = uploads.map((u: any) =>
+        `File: ${u.fileName}\nURL: ${u.fileUrl}`
+      ).join("\n\n");
+      parts.push(`UPLOADED DOCUMENTS:\n${fileList}`);
+    }
+
+    if (context.trim()) {
+      parts.push(`ADDITIONAL CONTEXT:\n${context.trim()}`);
+    }
+
+    return parts.length > 0 ? parts.join("\n\n---\n\n") : undefined;
   };
 
   // ── Waiting on Client ──
@@ -144,6 +179,9 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
 
   // ── Idle State ──
   if (ws === "idle") {
+    const uploads = uploadsQuery.data ?? [];
+    const hasUploads = uploads.length > 0 || uploadedFiles.length > 0;
+
     return (
       <Card>
         <CardHeader>
@@ -174,19 +212,36 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
                   ref={fileInputRef}
                   type="file"
                   multiple
+                  accept=".pdf,.doc,.docx,.txt,.md"
                   onChange={handleFileUpload}
                   className="flex-1"
                 />
                 {uploadFile.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               </div>
-              {uploadedFiles.length > 0 && (
-                <div className="space-y-1">
-                  {uploadedFiles.map((f, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <FileText className="h-3 w-3" /> {f}
+              {/* Show already-uploaded files from DB */}
+              {uploads.length > 0 && (
+                <div className="space-y-1 mt-2">
+                  <p className="text-xs text-muted-foreground font-medium">Uploaded files (will be sent to AI):</p>
+                  {uploads.map((u: any) => (
+                    <div key={u.id} className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded px-2 py-1">
+                      <FileText className="h-3 w-3 flex-shrink-0" />
+                      <span>{u.fileName}</span>
+                      <CheckCircle2 className="h-3 w-3 ml-auto" />
                     </div>
                   ))}
                 </div>
+              )}
+              {/* Show newly uploaded files this session (before DB refresh) */}
+              {uploadedFiles.filter(f => !uploads.find((u: any) => u.fileName === f)).map((f, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <FileText className="h-3 w-3" /> {f}
+                </div>
+              ))}
+              {hasUploads && (
+                <p className="text-xs text-blue-600">
+                  <Upload className="h-3 w-3 inline mr-1" />
+                  Uploaded documents will be included as source materials for the AI.
+                </p>
               )}
             </div>
           )}
@@ -234,6 +289,7 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
                 matterId,
                 phaseName: phase.phaseName,
                 context: context || undefined,
+                sourceContent: buildSourceContent(),
                 workflowModeOverride: (modeOverride && modeOverride !== config.defaultMode)
                   ? modeOverride as any
                   : undefined,
@@ -265,7 +321,7 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
         matterId={matterId}
         phaseName={phase.phaseName}
         phaseLabel={config.label}
-        sourceContent={context || undefined}
+        sourceContent={buildSourceContent()}
         context={context || undefined}
         onRefresh={onRefresh}
       />
@@ -377,8 +433,8 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
 
   // ── Complete ──
   if (ws === "complete") {
-    const phaseQuery = trpc.phase.get.useQuery({ matterId, phaseName: phase.phaseName });
-    const versions = phaseQuery.data?.versions ?? [];
+    // phaseDetailQuery is already declared at the top (unconditionally)
+    const versions = phaseDetailQuery.data?.versions ?? [];
     const officialVersion = phase.officialFinalVersion
       ? versions.find((v: any) => v.versionNumber === phase.officialFinalVersion)
       : versions.find((v: any) => v.isSelected === 1) ?? versions[0];
@@ -403,8 +459,12 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Show the official final version content */}
-          {officialVersion ? (
+          {phaseDetailQuery.isLoading ? (
+            <div className="flex items-center gap-2 text-muted-foreground py-8">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span>Loading phase content...</span>
+            </div>
+          ) : officialVersion ? (
             <ScrollArea className="h-[350px] rounded-lg border p-4">
               <div className="prose prose-sm max-w-none">
                 <Streamdown>{officialVersion.content}</Streamdown>
