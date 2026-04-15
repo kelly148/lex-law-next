@@ -35,3 +35,9 @@
 - [x] Update competitive drafting to use direct provider APIs instead of invokeLLM
 - [x] Write vitest tests for multi-provider LLM client (23 tests passing)
 - [x] Verify end-to-end workflow with real provider API calls
+- [x] Integrate Claude master prompt (v2.1) as system prompt for Claude provider
+- [x] Integrate Gemini master prompt (v2.2) as system prompt for Gemini provider
+- [x] Integrate Grok master prompt (v1.2) as system prompt for Grok provider
+- [x] Integrate GPT master prompt as system prompt for GPT/ChatGPT provider
+- [x] Update LLM client to prepend provider-specific master prompt before phase prompt
+- [x] Update tests for master prompt integration (29 tests passing)

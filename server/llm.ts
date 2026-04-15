@@ -9,6 +9,7 @@
  */
 import { ENV } from "./_core/env";
 import { ENABLED_PROVIDERS, type ProviderKey } from "../shared/workflow";
+import { MASTER_PROMPTS } from "./masterPrompts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -221,7 +222,20 @@ const PROVIDER_CALLERS: Record<
 };
 
 /**
+ * Build the full system prompt for a provider by prepending its master prompt.
+ */
+export function buildProviderSystemPrompt(
+  providerKey: ProviderKey,
+  phaseSystemPrompt: string,
+): string {
+  const masterPrompt = MASTER_PROMPTS[providerKey];
+  if (!masterPrompt) return phaseSystemPrompt;
+  return `${masterPrompt}\n\n---\n\n## Current Task Instructions\n\n${phaseSystemPrompt}`;
+}
+
+/**
  * Call a specific provider by key.
+ * Automatically prepends the provider's master prompt to the system prompt.
  */
 export async function callProvider(
   providerKey: ProviderKey,
@@ -232,7 +246,8 @@ export async function callProvider(
 ): Promise<string> {
   const caller = PROVIDER_CALLERS[providerKey];
   if (!caller) throw new Error(`Unknown provider: ${providerKey}`);
-  return caller(systemPrompt, userPrompt, maxTokens, jsonMode);
+  const fullSystemPrompt = buildProviderSystemPrompt(providerKey, systemPrompt);
+  return caller(fullSystemPrompt, userPrompt, maxTokens, jsonMode);
 }
 
 // ── Competitive Drafting ─────────────────────────────────────────────

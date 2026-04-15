@@ -26,11 +26,13 @@ vi.mock("./_core/env", () => ({
 
 import {
   callProvider,
+  buildProviderSystemPrompt,
   runCompetitiveDraft,
   runReviewCycle,
   type DraftResult,
   type ReviewResult,
 } from "./llm";
+import { MASTER_PROMPTS } from "./masterPrompts";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -57,12 +59,12 @@ describe("callProvider dispatch", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("routes 'claude' to Anthropic Messages API", async () => {
+  it("routes 'claude' to Anthropic Messages API with master prompt prepended", async () => {
     globalThis.fetch = mockFetchResponse({
       content: [{ type: "text", text: "Claude response" }],
     });
 
-    const result = await callProvider("claude", "System prompt", "User prompt");
+    const result = await callProvider("claude", "Phase task prompt", "User prompt");
     expect(result).toBe("Claude response");
 
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -72,16 +74,19 @@ describe("callProvider dispatch", () => {
     expect(options.headers["anthropic-version"]).toBe("2023-06-01");
     const body = JSON.parse(options.body);
     expect(body.model).toBe("claude-sonnet-4-6");
-    expect(body.system).toBe("System prompt");
+    // System prompt should contain the master prompt AND the phase prompt
+    expect(body.system).toContain("Kelly Satterwhite");
+    expect(body.system).toContain("Phase task prompt");
+    expect(body.system).toContain("Current Task Instructions");
     expect(body.messages[0].content).toBe("User prompt");
   });
 
-  it("routes 'gpt' to OpenAI Chat Completions API", async () => {
+  it("routes 'gpt' to OpenAI Chat Completions API with master prompt prepended", async () => {
     globalThis.fetch = mockFetchResponse({
       choices: [{ message: { content: "GPT response" } }],
     });
 
-    const result = await callProvider("gpt", "System prompt", "User prompt");
+    const result = await callProvider("gpt", "Phase task prompt", "User prompt");
     expect(result).toBe("GPT response");
 
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -91,15 +96,18 @@ describe("callProvider dispatch", () => {
     const body = JSON.parse(options.body);
     expect(body.model).toBe("gpt-5.4");
     expect(body.messages[0].role).toBe("system");
+    // System message should contain GPT master prompt + phase prompt
+    expect(body.messages[0].content).toContain("Virginia- and Maryland-licensed attorney");
+    expect(body.messages[0].content).toContain("Phase task prompt");
     expect(body.messages[1].role).toBe("user");
   });
 
-  it("routes 'gemini' to Google Generative Language API", async () => {
+  it("routes 'gemini' to Google Generative Language API with master prompt prepended", async () => {
     globalThis.fetch = mockFetchResponse({
       candidates: [{ content: { parts: [{ text: "Gemini response" }] } }],
     });
 
-    const result = await callProvider("gemini", "System prompt", "User prompt");
+    const result = await callProvider("gemini", "Phase task prompt", "User prompt");
     expect(result).toBe("Gemini response");
 
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -107,16 +115,18 @@ describe("callProvider dispatch", () => {
     expect(call[0]).toContain("gemini-2.5-pro");
     expect(call[0]).toContain("key=test-gemini-key");
     const body = JSON.parse(call[1].body);
-    expect(body.systemInstruction.parts[0].text).toBe("System prompt");
+    // System instruction should contain Gemini master prompt + phase prompt
+    expect(body.systemInstruction.parts[0].text).toContain("Kelly Satterwhite");
+    expect(body.systemInstruction.parts[0].text).toContain("Phase task prompt");
     expect(body.contents[0].parts[0].text).toBe("User prompt");
   });
 
-  it("routes 'grok' to xAI OpenAI-compatible API", async () => {
+  it("routes 'grok' to xAI OpenAI-compatible API with master prompt prepended", async () => {
     globalThis.fetch = mockFetchResponse({
       choices: [{ message: { content: "Grok response" } }],
     });
 
-    const result = await callProvider("grok", "System prompt", "User prompt");
+    const result = await callProvider("grok", "Phase task prompt", "User prompt");
     expect(result).toBe("Grok response");
 
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -125,6 +135,67 @@ describe("callProvider dispatch", () => {
     expect(options.headers["Authorization"]).toBe("Bearer test-xai-key");
     const body = JSON.parse(options.body);
     expect(body.model).toBe("grok-3");
+    // System message should contain Grok master prompt + phase prompt
+    expect(body.messages[0].content).toContain("Kelly Satterwhite");
+    expect(body.messages[0].content).toContain("Phase task prompt");
+  });
+});
+
+// ── Master Prompt Integration Tests ─────────────────────────────────
+
+describe("buildProviderSystemPrompt", () => {
+  it("prepends Claude master prompt to phase system prompt", () => {
+    const result = buildProviderSystemPrompt("claude", "Perform intake analysis.");
+    expect(result).toContain("Optimized for Claude Sonnet and Opus");
+    expect(result).toContain("Kelly Satterwhite, Esq.");
+    expect(result).toContain("Current Task Instructions");
+    expect(result).toContain("Perform intake analysis.");
+    // Master prompt comes first
+    const masterIdx = result.indexOf("Optimized for Claude");
+    const taskIdx = result.indexOf("Perform intake analysis.");
+    expect(masterIdx).toBeLessThan(taskIdx);
+  });
+
+  it("prepends Gemini master prompt to phase system prompt", () => {
+    const result = buildProviderSystemPrompt("gemini", "Draft engagement letter.");
+    expect(result).toContain("Optimized for Google Gemini");
+    expect(result).toContain("Draft engagement letter.");
+  });
+
+  it("prepends Grok master prompt to phase system prompt", () => {
+    const result = buildProviderSystemPrompt("grok", "Review document.");
+    expect(result).toContain("Optimized for Grok");
+    expect(result).toContain("Review document.");
+  });
+
+  it("prepends GPT master prompt to phase system prompt", () => {
+    const result = buildProviderSystemPrompt("gpt", "Create decision matrix.");
+    expect(result).toContain("Virginia & Maryland Licensed Attorney");
+    expect(result).toContain("Create decision matrix.");
+  });
+
+  it("each provider gets a different master prompt", () => {
+    const claude = buildProviderSystemPrompt("claude", "test");
+    const gemini = buildProviderSystemPrompt("gemini", "test");
+    const grok = buildProviderSystemPrompt("grok", "test");
+    const gpt = buildProviderSystemPrompt("gpt", "test");
+    // All should be different (different master prompts)
+    expect(claude).not.toBe(gemini);
+    expect(claude).not.toBe(grok);
+    expect(claude).not.toBe(gpt);
+    expect(gemini).not.toBe(grok);
+  });
+
+  it("MASTER_PROMPTS has entries for all 4 providers", () => {
+    expect(MASTER_PROMPTS.claude).toBeDefined();
+    expect(MASTER_PROMPTS.gemini).toBeDefined();
+    expect(MASTER_PROMPTS.grok).toBeDefined();
+    expect(MASTER_PROMPTS.gpt).toBeDefined();
+    // Each should be substantial (>1000 chars)
+    expect(MASTER_PROMPTS.claude.length).toBeGreaterThan(1000);
+    expect(MASTER_PROMPTS.gemini.length).toBeGreaterThan(1000);
+    expect(MASTER_PROMPTS.grok.length).toBeGreaterThan(1000);
+    expect(MASTER_PROMPTS.gpt.length).toBeGreaterThan(1000);
   });
 });
 
