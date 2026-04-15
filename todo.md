@@ -19,4 +19,4 @@
 - [x] Fact change panel with description and affected phase selection
 - [x] Phase completion view with re-run and stale warnings
 - [x] Vitest tests for tRPC procedures and workflow logic (37 tests passing)
-- [ ] SSE/polling for real-time workflow progress updates (deferred — uses query invalidation)
+- [x] Polling for real-time workflow progress updates (3s interval during active states)

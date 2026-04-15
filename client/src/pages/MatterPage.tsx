@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
 import { PHASE_LABELS, PHASE_NAMES, OPTIONAL_PHASES, type PhaseName, type WorkflowState } from "@shared/workflow";
 import { ArrowLeft, AlertTriangle, CheckCircle2, Circle, Loader2, SkipForward, Clock } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, useParams } from "wouter";
 import PhaseContent from "@/components/PhaseContent";
 import FactChangePanel from "@/components/FactChangePanel";
@@ -34,6 +34,8 @@ const STATE_LABELS: Record<WorkflowState, string> = {
   complete: "Complete",
 };
 
+const ACTIVE_STATES = new Set(["drafting", "reviewing", "evaluating", "regenerating"]);
+
 export default function MatterPage() {
   useAuth({ redirectOnUnauthenticated: true });
   const params = useParams<{ matterId: string }>();
@@ -45,6 +47,35 @@ export default function MatterPage() {
     { matterId: params.matterId },
     { enabled: !!params.matterId }
   );
+
+  // Auto-poll every 3s when any phase is in an active processing state
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const hasActivePhase = matterQuery.data?.phases?.some(
+      (p: { workflowState: string }) => ACTIVE_STATES.has(p.workflowState)
+    );
+
+    if (hasActivePhase) {
+      if (!pollingRef.current) {
+        pollingRef.current = setInterval(() => {
+          matterQuery.refetch();
+        }, 3000);
+      }
+    } else {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    }
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [matterQuery.data]);
 
   if (matterQuery.isLoading) {
     return (
@@ -72,8 +103,8 @@ export default function MatterPage() {
   }
 
   const { matter, phases } = matterQuery.data;
-  const currentPhaseData = phases.find(p => p.phaseName === selectedPhase);
-  const completedCount = phases.filter(p => p.workflowState === "complete").length;
+  const currentPhaseData = phases.find((p: { phaseName: string }) => p.phaseName === selectedPhase);
+  const completedCount = phases.filter((p: { workflowState: string }) => p.workflowState === "complete").length;
 
   return (
     <div className="container py-6 space-y-4">
@@ -115,7 +146,7 @@ export default function MatterPage() {
             </CardHeader>
             <CardContent className="p-2">
               <div className="space-y-1">
-                {phases.map((phase) => {
+                {phases.map((phase: any) => {
                   const phaseName = phase.phaseName as PhaseName;
                   const isSelected = phaseName === selectedPhase;
                   const isOptional = OPTIONAL_PHASES.includes(phaseName);
