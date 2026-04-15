@@ -1,0 +1,1 @@
+ALTER TABLE `uploads` ADD `fileSize` int;

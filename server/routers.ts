@@ -831,6 +831,7 @@ const uploadRouter = router({
       fileName: z.string(),
       fileBase64: z.string(),
       contentType: z.string().default("application/octet-stream"),
+      fileSize: z.number().int().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const buffer = Buffer.from(input.fileBase64, "base64");
@@ -843,6 +844,7 @@ const uploadRouter = router({
         fileName: input.fileName,
         fileUrl: url,
         contentType: input.contentType,
+        fileSize: input.fileSize,
         uploadedBy: ctx.user.id,
       });
       return upload;

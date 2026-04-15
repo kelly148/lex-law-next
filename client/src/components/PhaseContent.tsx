@@ -12,15 +12,16 @@ import {
   type PhaseName, type WorkflowState, type WorkflowMode,
 } from "@shared/workflow";
 import {
-  Play, SkipForward, Loader2, Upload, FileText, AlertTriangle, CheckCircle2, Clock,
+  Play, SkipForward, Loader2, AlertTriangle, CheckCircle2, Clock,
 } from "lucide-react";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import DraftComparison from "./DraftComparison";
 import AttorneyReview from "./AttorneyReview";
 import ModelSelector from "./ModelSelector";
 import AttorneyDraftReview from "./AttorneyDraftReview";
 import FormattingReview from "./FormattingReview";
+import FileDropZone from "./FileDropZone";
 import { Streamdown } from "streamdown";
 
 interface Phase {
@@ -56,8 +57,10 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
   const isOptional = OPTIONAL_PHASES.includes(phaseName);
   const [context, setContext] = useState("");
   const [modeOverride, setModeOverride] = useState<string>("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [isUploadingAndStarting, setIsUploadingAndStarting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
+  const handleFilesChange = useCallback((files: File[]) => setPendingFiles(files), []);
 
   // ── All hooks must be called unconditionally ──────────────────────
   // This query is used in the "complete" state but must be at the top level
@@ -66,10 +69,10 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
     { enabled: ws === "complete" }
   );
 
-  // Fetch uploaded files for this phase (used to pass to LLM as source content)
+  // Fetch uploaded files for this phase
   const uploadsQuery = trpc.upload.listByPhase.useQuery(
     { matterId, phaseName: phase.phaseName },
-    { enabled: phaseName === "intake" }
+    { enabled: ws === "idle" || ws === "complete" }
   );
 
   const startPhase = trpc.phase.startPhase.useMutation({
@@ -100,33 +103,30 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
   });
 
   const uploadFile = trpc.upload.uploadFile.useMutation({
-    onSuccess: (data) => {
-      toast.success(`Uploaded: ${data.fileName}`);
-      setUploadedFiles(prev => [...prev, data.fileName]);
-      // Refresh uploads list so they're available when starting the phase
-      uploadsQuery.refetch();
-    },
     onError: (err) => toast.error(err.message),
   });
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    for (const file of Array.from(files)) {
+  // Upload a single File object and return a promise
+  const uploadSingleFile = (file: File): Promise<void> => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
         const base64 = (reader.result as string).split(",")[1];
-        uploadFile.mutate({
-          matterId,
-          phaseName: phase.phaseName,
-          fileName: file.name,
-          fileBase64: base64,
-          contentType: file.type || "application/octet-stream",
-        });
+        uploadFile.mutate(
+          {
+            matterId,
+            phaseName: phase.phaseName,
+            fileName: file.name,
+            fileBase64: base64,
+            contentType: file.type || "application/octet-stream",
+            fileSize: file.size,
+          },
+          { onSuccess: () => resolve(), onError: (e) => reject(e) }
+        );
       };
+      reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
       reader.readAsDataURL(file);
-    }
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    });
   };
 
   // Build source content string from uploaded files + manual context
@@ -179,8 +179,32 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
 
   // ── Idle State ──
   if (ws === "idle") {
-    const uploads = uploadsQuery.data ?? [];
-    const hasUploads = uploads.length > 0 || uploadedFiles.length > 0;
+    const existingUploads = (uploadsQuery.data ?? []) as Array<{ id: number; fileName: string; fileUrl: string; fileSize?: number | null }>;
+    const hasSources = pendingFiles.length > 0 || existingUploads.length > 0;
+
+    const handleStartPhase = async () => {
+      setIsUploadingAndStarting(true);
+      try {
+        // 1. Upload all pending files sequentially
+        for (const file of pendingFiles) {
+          await uploadSingleFile(file);
+        }
+        // 2. Then start the phase
+        await startPhase.mutateAsync({
+          matterId,
+          phaseName: phase.phaseName,
+          context: context || undefined,
+          sourceContent: buildSourceContent(),
+          workflowModeOverride: (modeOverride && modeOverride !== config.defaultMode)
+            ? modeOverride as any
+            : undefined,
+        });
+      } catch (e: any) {
+        toast.error(e?.message || "Failed to start phase");
+      } finally {
+        setIsUploadingAndStarting(false);
+      }
+    };
 
     return (
       <Card>
@@ -203,48 +227,19 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* File upload for intake */}
-          {phaseName === "intake" && (
-            <div className="space-y-2">
-              <Label>Source Materials</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.doc,.docx,.txt,.md"
-                  onChange={handleFileUpload}
-                  className="flex-1"
-                />
-                {uploadFile.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              </div>
-              {/* Show already-uploaded files from DB */}
-              {uploads.length > 0 && (
-                <div className="space-y-1 mt-2">
-                  <p className="text-xs text-muted-foreground font-medium">Uploaded files (will be sent to AI):</p>
-                  {uploads.map((u: any) => (
-                    <div key={u.id} className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded px-2 py-1">
-                      <FileText className="h-3 w-3 flex-shrink-0" />
-                      <span>{u.fileName}</span>
-                      <CheckCircle2 className="h-3 w-3 ml-auto" />
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Show newly uploaded files this session (before DB refresh) */}
-              {uploadedFiles.filter(f => !uploads.find((u: any) => u.fileName === f)).map((f, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <FileText className="h-3 w-3" /> {f}
-                </div>
-              ))}
-              {hasUploads && (
-                <p className="text-xs text-blue-600">
-                  <Upload className="h-3 w-3 inline mr-1" />
-                  Uploaded documents will be included as source materials for the AI.
-                </p>
-              )}
-            </div>
-          )}
+          {/* Source Materials — FileDropZone for ALL phases */}
+          <div className="space-y-2">
+            <Label>Source Materials</Label>
+            <FileDropZone
+              onFilesChange={handleFilesChange}
+              existingFiles={existingUploads.map(u => ({
+                id: u.id,
+                fileName: u.fileName,
+                fileUrl: u.fileUrl,
+                fileSize: u.fileSize ?? undefined,
+              }))}
+            />
+          </div>
 
           <div className="space-y-2">
             <Label>Additional Context</Label>
@@ -284,29 +279,30 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
           )}
 
           <div className="flex gap-2">
-            <Button
-              onClick={() => startPhase.mutate({
-                matterId,
-                phaseName: phase.phaseName,
-                context: context || undefined,
-                sourceContent: buildSourceContent(),
-                workflowModeOverride: (modeOverride && modeOverride !== config.defaultMode)
-                  ? modeOverride as any
-                  : undefined,
-              })}
-              disabled={startPhase.isPending}
-            >
-              {startPhase.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Play className="h-4 w-4 mr-2" />}
-              Start Phase
-            </Button>
-            {isOptional && (
-              <Button
-                variant="outline"
-                onClick={() => skipPhase.mutate({ matterId, phaseName: phase.phaseName })}
-                disabled={skipPhase.isPending}
-              >
-                <SkipForward className="h-4 w-4 mr-2" /> Skip
-              </Button>
+            {isUploadingAndStarting ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Uploading files and starting phase...
+              </div>
+            ) : (
+              <>
+                <Button
+                  onClick={handleStartPhase}
+                  disabled={isUploadingAndStarting || startPhase.isPending}
+                >
+                  <Play className="h-4 w-4 mr-2" />
+                  Start Phase
+                </Button>
+                {isOptional && (
+                  <Button
+                    variant="outline"
+                    onClick={() => skipPhase.mutate({ matterId, phaseName: phase.phaseName })}
+                    disabled={skipPhase.isPending}
+                  >
+                    <SkipForward className="h-4 w-4 mr-2" /> Skip
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </CardContent>

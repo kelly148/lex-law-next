@@ -117,3 +117,14 @@
 - [x] Add matterName field to New Matter creation form (required)
 - [x] Display matterName in matter detail page header
 - [x] Allow inline rename from matter detail page header
+
+## Drag-and-Drop File Upload
+- [x] Build FileDropZone component (idle/drag-hover/rejected states, pending list, previously-uploaded list)
+- [x] Duplicate prevention: skip files already in pending list by name
+- [x] Accepted types: .pdf, .docx, .doc, .txt, .rtf only
+- [x] Integrate FileDropZone into PhaseContent idle state
+- [x] Upload pending files sequentially before starting phase
+- [x] Show "Uploading files and starting phase..." spinner during upload+start
+- [x] Disable Start Phase if no pending and no previously uploaded files (note: Start Phase is always enabled per spec)
+- [x] Apply to ALL phases that accept source materials (not just intake)
+- [x] Start Phase button always enabled regardless of file/context state (intentional — attorney may start without source materials)

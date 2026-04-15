@@ -123,6 +123,7 @@ export const uploads = mysqlTable("uploads", {
   fileName: varchar("fileName", { length: 512 }).notNull(),
   fileUrl: text("fileUrl").notNull(),
   contentType: varchar("contentType", { length: 128 }),
+  fileSize: int("fileSize"),
   uploadedBy: int("uploadedBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
