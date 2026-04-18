@@ -8,6 +8,7 @@ import {
   InsertFeedback, feedback,
   InsertFactChange, factChanges,
   InsertUpload, uploads,
+  InsertMatterFolder, matterFolders,
 } from "../drizzle/schema";
 import { PHASE_NAMES, PHASE_ORDER, PHASE_CONFIG } from "../shared/workflow";
 import { ENV } from './_core/env';
@@ -357,4 +358,78 @@ export async function getUploadsByPhase(matterId: string, phaseName: string) {
   return db.select().from(uploads)
     .where(and(eq(uploads.matterId, matterId), eq(uploads.phaseName, phaseName)))
     .orderBy(desc(uploads.createdAt));
+}
+
+// ── Matter Delete / Archive Helpers ───────────────────────────────────────────
+
+/** Hard-delete a matter and all related rows (cascade). */
+export async function deleteMatter(matterId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Delete child rows first (no FK cascade in TiDB by default)
+  await db.delete(uploads).where(eq(uploads.matterId, matterId));
+  await db.delete(feedback).where(eq(feedback.matterId, matterId));
+  await db.delete(factChanges).where(eq(factChanges.matterId, matterId));
+  await db.delete(versions).where(eq(versions.matterId, matterId));
+  await db.delete(phases).where(eq(phases.matterId, matterId));
+  await db.delete(matters).where(eq(matters.matterId, matterId));
+  return { success: true };
+}
+
+/** Soft-archive a matter (status = 'archived'). */
+export async function archiveMatter(matterId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(matters).set({ status: "archived" as any }).where(eq(matters.matterId, matterId));
+  return getMatterByMatterId(matterId);
+}
+
+/** Restore an archived matter back to active. */
+export async function unarchiveMatter(matterId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(matters).set({ status: "active" as any }).where(eq(matters.matterId, matterId));
+  return getMatterByMatterId(matterId);
+}
+
+/** Assign (or unassign) a matter to a folder. */
+export async function assignMatterToFolder(matterId: string, folderId: string | null) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(matters).set({ folderId: folderId ?? null }).where(eq(matters.matterId, matterId));
+  return getMatterByMatterId(matterId);
+}
+
+// ── Folder Helpers ─────────────────────────────────────────────────────────────────
+
+export async function createFolder(data: InsertMatterFolder) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(matterFolders).values(data);
+  const [row] = await db.select().from(matterFolders).where(eq(matterFolders.folderId, data.folderId)).limit(1);
+  return row;
+}
+
+export async function listFolders(userId?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.select().from(matterFolders).orderBy(asc(matterFolders.name));
+}
+
+export async function renameFolder(folderId: string, name: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(matterFolders).set({ name }).where(eq(matterFolders.folderId, folderId));
+  const [row] = await db.select().from(matterFolders).where(eq(matterFolders.folderId, folderId)).limit(1);
+  return row ?? null;
+}
+
+/** Delete a folder — unassigns all matters in it first. */
+export async function deleteFolder(folderId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Unassign all matters from this folder
+  await db.update(matters).set({ folderId: null }).where(eq(matters.folderId, folderId));
+  await db.delete(matterFolders).where(eq(matterFolders.folderId, folderId));
+  return { success: true };
 }

@@ -16,6 +16,20 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// ── Matter Folders ───────────────────────────────────────────────────
+export const matterFolders = mysqlTable("matter_folders", {
+  id: int("id").autoincrement().primaryKey(),
+  folderId: varchar("folderId", { length: 64 }).notNull().unique(),
+  name: varchar("name", { length: 256 }).notNull(),
+  color: varchar("color", { length: 32 }).default("#2E75B6").notNull(),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MatterFolder = typeof matterFolders.$inferSelect;
+export type InsertMatterFolder = typeof matterFolders.$inferInsert;
+
 // ── Matters ──────────────────────────────────────────────────────────
 export const matters = mysqlTable("matters", {
   id: int("id").autoincrement().primaryKey(),
@@ -25,6 +39,7 @@ export const matters = mysqlTable("matters", {
   jurisdiction: varchar("jurisdiction", { length: 256 }).notNull(),
   workflowPath: mysqlEnum("workflowPath", ["full", "core_only"]).default("full").notNull(),
   status: mysqlEnum("status", ["active", "completed", "archived"]).default("active").notNull(),
+  folderId: varchar("folderId", { length: 64 }),
   createdBy: int("createdBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

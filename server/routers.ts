@@ -7,6 +7,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import {
   createMatter, listMatters, getMatterByMatterId, renameMatter, updateClientName,
+  deleteMatter, archiveMatter, unarchiveMatter, assignMatterToFolder,
   createPhases, getPhasesByMatterId, getPhase, updatePhaseWorkflowState,
   updatePhaseFields, setPhaseStatus, skipPhase,
   createVersion, getVersionsByPhase, getVersionByNumber, selectVersion, getLatestVersionNumber,
@@ -14,6 +15,7 @@ import {
   createFactChange, getFactChangesByMatter,
   createUpload, getUploadsByPhase,
   collectPriorPhaseOutputs,
+  createFolder, listFolders, renameFolder, deleteFolder,
 } from "./db";
 import { storagePut } from "./storage";
 import { buildSourceContentFromUploads } from "./fileExtractor";
@@ -113,6 +115,77 @@ const matterRouter = router({
       const matter = await getMatterByMatterId(input.matterId);
       if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
       return updateClientName(input.matterId, input.clientName);
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ matterId: z.string() }))
+    .mutation(async ({ input }) => {
+      const matter = await getMatterByMatterId(input.matterId);
+      if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
+      return deleteMatter(input.matterId);
+    }),
+
+  archive: protectedProcedure
+    .input(z.object({ matterId: z.string() }))
+    .mutation(async ({ input }) => {
+      const matter = await getMatterByMatterId(input.matterId);
+      if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
+      return archiveMatter(input.matterId);
+    }),
+
+  unarchive: protectedProcedure
+    .input(z.object({ matterId: z.string() }))
+    .mutation(async ({ input }) => {
+      const matter = await getMatterByMatterId(input.matterId);
+      if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
+      return unarchiveMatter(input.matterId);
+    }),
+
+  assignFolder: protectedProcedure
+    .input(z.object({
+      matterId: z.string(),
+      folderId: z.string().nullable(),
+    }))
+    .mutation(async ({ input }) => {
+      const matter = await getMatterByMatterId(input.matterId);
+      if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
+      return assignMatterToFolder(input.matterId, input.folderId);
+    }),
+});
+
+const folderRouter = router({
+  list: protectedProcedure.query(async () => {
+    return listFolders();
+  }),
+
+  create: protectedProcedure
+    .input(z.object({
+      name: z.string().min(1).max(256),
+      color: z.string().max(32).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const folderId = nanoid(12);
+      return createFolder({
+        folderId,
+        name: input.name,
+        color: input.color ?? "#2E75B6",
+        createdBy: ctx.user.id,
+      });
+    }),
+
+  rename: protectedProcedure
+    .input(z.object({
+      folderId: z.string(),
+      name: z.string().min(1).max(256),
+    }))
+    .mutation(async ({ input }) => {
+      return renameFolder(input.folderId, input.name);
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ folderId: z.string() }))
+    .mutation(async ({ input }) => {
+      return deleteFolder(input.folderId);
     }),
 });
 
@@ -960,6 +1033,7 @@ export const appRouter = router({
     }),
   }),
   matter: matterRouter,
+  folder: folderRouter,
   phase: phaseRouter,
   feedback: feedbackRouter,
   factChange: factChangeRouter,

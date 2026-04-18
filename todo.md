@@ -177,3 +177,36 @@
 - [x] Trigger browser download of .docx file from frontend via blob URL
 - [x] Confidentiality notice and firm branding (Navy/Accent colors, Garamond headings) embedded in document
 - [x] Write vitest tests for DOCX generation (7 tests — buffer validity, PK header, markdown parsing, edge cases) — 118 tests total
+
+## Matter Deletion & Organization
+
+### DB Schema
+- [x] Add matter_folders table: id, userId, name, color, createdAt
+- [x] Add folderId column to matters table (nullable FK to matter_folders)
+- [x] Generate migration SQL (0007_youthful_black_knight.sql) and apply
+- [x] Add deleteMatter DB helper (cascade deletes phases, versions, feedback, uploads)
+- [x] Add archiveMatter DB helper (sets status = 'archived')
+- [x] Add createFolder / listFolders / renameFolder / deleteFolder DB helpers
+- [x] Add assignMatterToFolder DB helper
+
+### tRPC Procedures
+- [x] matter.delete procedure (hard delete with cascade)
+- [x] matter.archive procedure (soft archive)
+- [x] matter.unarchive procedure (restore to active)
+- [x] folder.create procedure
+- [x] folder.list procedure
+- [x] folder.rename procedure
+- [x] folder.delete procedure (unassigns matters, does not delete them)
+- [x] matter.assignFolder procedure
+
+### Frontend
+- [x] Folder sidebar panel on Home.tsx (Active / All Matters / Archived / per-folder with counts)
+- [x] Delete matter button with confirmation dialog (AlertDialog) — warns about permanent deletion
+- [x] Archive / Unarchive matter action in matter list (3-dot dropdown)
+- [x] Assign matter to folder via dropdown in matter list
+- [x] Filter matter list by selected folder/status
+- [x] Create new folder UI (dialog with name + color picker)
+- [x] Rename / delete folder UI (inline edit + X button on hover)
+- [x] Show folder badge on matter list items (colored pill)
+- [x] Archived matters shown under Archived filter (not mixed with active)
+- [x] Write vitest tests for matter delete/archive/unarchive and folder CRUD (13 tests) — 131 tests total
