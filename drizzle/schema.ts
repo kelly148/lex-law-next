@@ -21,6 +21,7 @@ export const matters = mysqlTable("matters", {
   id: int("id").autoincrement().primaryKey(),
   matterId: varchar("matterId", { length: 64 }).notNull().unique(),
   matterName: varchar("matterName", { length: 512 }).notNull().default(""),
+  clientName: varchar("clientName", { length: 512 }).default(""),
   jurisdiction: varchar("jurisdiction", { length: 256 }).notNull(),
   workflowPath: mysqlEnum("workflowPath", ["full", "core_only"]).default("full").notNull(),
   status: mysqlEnum("status", ["active", "completed", "archived"]).default("active").notNull(),

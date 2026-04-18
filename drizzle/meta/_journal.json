@@ -43,6 +43,13 @@
       "when": 1776286138401,
       "tag": "0005_common_gorgon",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1776513547545,
+      "tag": "0006_flimsy_whizzer",
+      "breakpoints": true
     }
   ]
 }

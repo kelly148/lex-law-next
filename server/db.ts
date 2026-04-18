@@ -89,6 +89,13 @@ export async function renameMatter(matterId: string, matterName: string) {
   return getMatterByMatterId(matterId);
 }
 
+export async function updateClientName(matterId: string, clientName: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(matters).set({ clientName }).where(eq(matters.matterId, matterId));
+  return getMatterByMatterId(matterId);
+}
+
 // ── Phase Helpers ────────────────────────────────────────────────────
 export async function createPhases(data: InsertPhase[]) {
   const db = await getDb();

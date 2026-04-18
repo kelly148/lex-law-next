@@ -74,6 +74,13 @@ export default function MatterPage() {
   const [showFactChange, setShowFactChange] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
+  const [editingClientName, setEditingClientName] = useState(false);
+  const [clientInput, setClientInput] = useState("");
+
+  const updateClient = trpc.matter.updateClient.useMutation({
+    onSuccess: () => { matterQuery.refetch(); setEditingClientName(false); },
+    onError: (err) => { toast.error(err.message); },
+  });
 
   const renameMatter = trpc.matter.rename.useMutation({
     onSuccess: () => { matterQuery.refetch(); setEditingName(false); },
@@ -198,7 +205,51 @@ export default function MatterPage() {
                 </Button>
               </div>
             )}
-            <p className="text-sm text-muted-foreground">
+            {/* Client Name inline edit */}
+            {editingClientName ? (
+              <div className="flex items-center gap-2 mt-1">
+                <Input
+                  className="h-7 text-sm w-56"
+                  placeholder="Client name"
+                  value={clientInput}
+                  onChange={(e) => setClientInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      updateClient.mutate({ matterId: matter.matterId, clientName: clientInput.trim() });
+                    } else if (e.key === "Escape") {
+                      setEditingClientName(false);
+                    }
+                  }}
+                  autoFocus
+                />
+                <Button
+                  size="icon" variant="ghost" className="h-6 w-6 text-green-600"
+                  disabled={updateClient.isPending}
+                  onClick={() => updateClient.mutate({ matterId: matter.matterId, clientName: clientInput.trim() })}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground"
+                  onClick={() => setEditingClientName(false)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <div
+                className="flex items-center gap-1.5 group mt-1 cursor-pointer"
+                onClick={() => { setClientInput(matter.clientName || ""); setEditingClientName(true); }}
+              >
+                {matter.clientName ? (
+                  <span className="text-sm font-medium text-foreground/80">Client: {matter.clientName}</span>
+                ) : (
+                  <span className="text-sm text-muted-foreground/50 italic">Add client name</span>
+                )}
+                <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            )}
+            <p className="text-sm text-muted-foreground mt-0.5">
               {matter.jurisdiction} &middot; {matter.workflowPath === "full" ? "Full Workflow" : "Core Only"} &middot; {completedCount}/{phases.length} phases
             </p>
           </div>

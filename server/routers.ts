@@ -6,7 +6,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import {
-  createMatter, listMatters, getMatterByMatterId, renameMatter,
+  createMatter, listMatters, getMatterByMatterId, renameMatter, updateClientName,
   createPhases, getPhasesByMatterId, getPhase, updatePhaseWorkflowState,
   updatePhaseFields, setPhaseStatus, skipPhase,
   createVersion, getVersionsByPhase, getVersionByNumber, selectVersion, getLatestVersionNumber,
@@ -21,6 +21,7 @@ import {
   runSingleModel, runCompetitiveDraft, runSingleModelDraft,
   runRevision, runReviewCycle, runFormattingPass,
 } from "./llm";
+import { generatePhaseDocx } from "./docxExport";
 import { PHASE_PROMPTS, REVIEWER_PROMPT } from "./prompts";
 import {
   PHASE_NAMES, PHASE_CONFIG, OPTIONAL_PHASES,
@@ -50,6 +51,7 @@ const matterRouter = router({
   create: protectedProcedure
     .input(z.object({
       matterName: z.string().min(1, "Matter name is required").max(512),
+      clientName: z.string().max(512).optional(),
       jurisdiction: z.string().min(1),
       workflowPath: z.enum(["full", "core_only"]).default("full"),
     }))
@@ -58,6 +60,7 @@ const matterRouter = router({
       const matter = await createMatter({
         matterId,
         matterName: input.matterName,
+        clientName: input.clientName ?? "",
         jurisdiction: input.jurisdiction,
         workflowPath: input.workflowPath,
         createdBy: ctx.user.id,
@@ -99,6 +102,17 @@ const matterRouter = router({
       const matter = await getMatterByMatterId(input.matterId);
       if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
       return renameMatter(input.matterId, input.matterName);
+    }),
+
+  updateClient: protectedProcedure
+    .input(z.object({
+      matterId: z.string(),
+      clientName: z.string().max(512),
+    }))
+    .mutation(async ({ input }) => {
+      const matter = await getMatterByMatterId(input.matterId);
+      if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
+      return updateClientName(input.matterId, input.clientName);
     }),
 });
 
@@ -679,6 +693,45 @@ const phaseRouter = router({
     .input(z.object({ matterId: z.string(), phaseName: z.string() }))
     .mutation(async ({ input }) => {
       return updatePhaseWorkflowState(input.matterId, input.phaseName, "complete");
+    }),
+
+  // ── Download DOCX ─────────────────────────────────────────────────
+  downloadDocx: protectedProcedure
+    .input(z.object({ matterId: z.string(), phaseName: z.string() }))
+    .mutation(async ({ input }) => {
+      const phase = await getPhase(input.matterId, input.phaseName);
+      if (!phase) throw new TRPCError({ code: "NOT_FOUND", message: "Phase not found" });
+
+      const matter = await getMatterByMatterId(input.matterId);
+      if (!matter) throw new TRPCError({ code: "NOT_FOUND", message: "Matter not found" });
+
+      // Resolve the official final version content
+      const officialVersionNum = phase.officialFinalVersion;
+      if (!officialVersionNum) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "No official final version available for this phase" });
+      }
+
+      const version = await getVersionByNumber(input.matterId, input.phaseName, officialVersionNum);
+      if (!version) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Official final version content not found" });
+      }
+
+      const phaseName = input.phaseName as PhaseName;
+      const config = PHASE_CONFIG[phaseName];
+
+      const buffer = await generatePhaseDocx(version.content, {
+        matterName: matter.matterName || input.matterId,
+        clientName: matter.clientName || undefined,
+        phaseLabel: config?.label ?? input.phaseName,
+        jurisdiction: matter.jurisdiction || undefined,
+        date: new Date().toISOString(),
+      });
+
+      return {
+        fileName: `${(matter.matterName || input.matterId).replace(/[^a-zA-Z0-9 _-]/g, "")}_${config?.label ?? input.phaseName}_${new Date().toISOString().slice(0, 10)}.docx`,
+        base64: buffer.toString("base64"),
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      };
     }),
 });
 

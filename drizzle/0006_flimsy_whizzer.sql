@@ -1,0 +1,1 @@
+ALTER TABLE `matters` ADD `clientName` varchar(512) DEFAULT '';

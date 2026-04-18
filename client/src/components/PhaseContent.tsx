@@ -12,7 +12,7 @@ import {
   type PhaseName, type WorkflowState, type WorkflowMode,
 } from "@shared/workflow";
 import {
-  Play, SkipForward, Loader2, AlertTriangle, CheckCircle2, Clock,
+  Play, SkipForward, Loader2, AlertTriangle, CheckCircle2, Clock, Download,
 } from "lucide-react";
 import { useState, useRef, useCallback } from "react";
 import { toast } from "sonner";
@@ -48,6 +48,47 @@ interface PhaseContentProps {
   phase: Phase;
   allPhases: Phase[];
   onRefresh: () => void;
+}
+
+// ── Download DOCX Button ─────────────────────────────────────────────
+function DownloadDocxButton({ matterId, phaseName, phaseLabel }: { matterId: string; phaseName: string; phaseLabel: string }) {
+  const downloadDocx = trpc.phase.downloadDocx.useMutation({
+    onSuccess: (data) => {
+      // Trigger browser download from base64
+      const byteChars = atob(data.base64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: data.contentType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${data.fileName}`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  return (
+    <Button
+      variant="outline"
+      onClick={() => downloadDocx.mutate({ matterId, phaseName })}
+      disabled={downloadDocx.isPending}
+    >
+      {downloadDocx.isPending ? (
+        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+      ) : (
+        <Download className="h-4 w-4 mr-2" />
+      )}
+      Download Word
+    </Button>
+  );
 }
 
 export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: PhaseContentProps) {
@@ -262,12 +303,13 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
           </div>
 
           <div className="space-y-2">
-            <Label>Additional Context</Label>
+            <Label>Additional Context / Attorney Notes <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
             <Textarea
-              placeholder="Provide any additional context or instructions for this phase..."
+              placeholder="Enter any additional context, attorney notes, or specific instructions for this phase. This text will be included in the AI prompt alongside any uploaded documents."
               value={context}
               onChange={(e) => setContext(e.target.value)}
               rows={4}
+              className="resize-y"
             />
           </div>
 
@@ -497,7 +539,10 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
             </p>
           )}
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            {phase.officialFinalVersion && (
+              <DownloadDocxButton matterId={matterId} phaseName={phase.phaseName} phaseLabel={config.label} />
+            )}
             {canWaitOnClient && (
               <Button
                 variant="outline"

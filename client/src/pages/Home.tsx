@@ -19,6 +19,7 @@ export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
   const [matterName, setMatterName] = useState("");
+  const [clientName, setClientName] = useState("");
   const [jurisdiction, setJurisdiction] = useState("");
   const [workflowPath, setWorkflowPath] = useState<"full" | "core_only">("full");
 
@@ -28,6 +29,7 @@ export default function Home() {
       toast.success("Matter created");
       mattersQuery.refetch();
       setMatterName("");
+      setClientName("");
       setJurisdiction("");
       setLocation(`/matters/${data.matter.matterId}`);
     },
@@ -112,7 +114,7 @@ export default function Home() {
                 e.preventDefault();
                 if (!matterName.trim()) { toast.error("Matter name is required"); return; }
                 if (!jurisdiction.trim()) { toast.error("Jurisdiction is required"); return; }
-                createMatter.mutate({ matterName: matterName.trim(), jurisdiction: jurisdiction.trim(), workflowPath });
+                createMatter.mutate({ matterName: matterName.trim(), clientName: clientName.trim() || undefined, jurisdiction: jurisdiction.trim(), workflowPath });
               }}
             >
               <div className="space-y-2">
@@ -123,6 +125,15 @@ export default function Home() {
                   value={matterName}
                   onChange={(e) => setMatterName(e.target.value)}
                   required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="clientName">Client Name <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Input
+                  id="clientName"
+                  placeholder="e.g. John Kinsey"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
@@ -185,7 +196,10 @@ export default function Home() {
                           {m.status}
                         </Badge>
                       </div>
-                      <p className="text-sm text-muted-foreground mt-1 truncate">{m.jurisdiction}</p>
+                      {m.clientName && (
+                        <p className="text-sm font-medium text-foreground/80 mt-0.5 truncate">Client: {m.clientName}</p>
+                      )}
+                      <p className="text-sm text-muted-foreground mt-0.5 truncate">{m.jurisdiction}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         Created {new Date(m.createdAt).toLocaleDateString()}
                       </p>

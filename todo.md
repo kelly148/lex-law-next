@@ -149,3 +149,31 @@
 - [x] Strengthen agreement selectModel test: assert userPrompt passed to runSingleModel contains prior phase outputs + manual context
 - [x] Add agreement full_competitive startPhase test: collectPriorPhaseOutputs mock added to db mock, competitive path covered by existing full_competitive tests
 - [x] Add dedicated agreement full_competitive startPhase test asserting collectPriorPhaseOutputs is called on the competitive path (110 tests passing)
+
+## Client Name Field
+- [x] Add clientName column to matters table in drizzle/schema.ts
+- [x] Generate and apply migration SQL for clientName column (0006_flimsy_whizzer.sql)
+- [x] Update createMatter DB helper to accept and store clientName
+- [x] Update matter.create tRPC procedure to accept clientName (optional)
+- [x] Add matter.updateClient tRPC procedure for editing clientName after creation
+- [x] Add clientName field to New Matter creation form (optional)
+- [x] Display clientName in matter list alongside matter name
+- [x] Display clientName in matter detail page header with inline edit
+- [x] Pass clientName to DOCX export for document auto-population
+
+## Manual Context Text Box
+- [x] Add "Additional context / attorney notes (optional)" textarea to phase idle screen
+- [x] Persist context text in component state across re-renders
+- [x] Pass manual context text as context to selectModel and startPhase mutations
+- [x] Updated label and placeholder to clearly describe purpose
+
+## DOCX Export
+- [x] Install docx npm package for server-side Word generation (v9.6.1)
+- [x] Create server/docxExport.ts with generatePhaseDocx function
+- [x] Include firm name, attorney name, matter name, client name, phase title, date in header
+- [x] Format phase content as styled Word document (headings, paragraphs, proper fonts, inline bold)
+- [x] Add phase.downloadDocx tRPC procedure returning base64-encoded DOCX + fileName
+- [x] Add Download Word button to completed phase view (PhaseContent complete state)
+- [x] Trigger browser download of .docx file from frontend via blob URL
+- [x] Confidentiality notice and firm branding (Navy/Accent colors, Garamond headings) embedded in document
+- [x] Write vitest tests for DOCX generation (7 tests — buffer validity, PK header, markdown parsing, edge cases) — 118 tests total
