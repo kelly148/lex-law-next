@@ -413,6 +413,7 @@ describe("matter and phase routers", () => {
     getFactChangesByMatter: vi.fn().mockResolvedValue([]),
     createUpload: vi.fn().mockResolvedValue({ id: 1, fileName: "test.pdf", fileUrl: "https://s3.example.com/test.pdf" }),
     getUploadsByPhase: vi.fn().mockResolvedValue([]),
+    updateUploadExtractedText: vi.fn().mockResolvedValue(undefined),
     collectPriorPhaseOutputs: vi.fn().mockResolvedValue(undefined),
     markPhasesStale: vi.fn().mockResolvedValue(undefined),
     upsertUser: vi.fn().mockResolvedValue(undefined),

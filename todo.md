@@ -231,3 +231,14 @@
 ### Tests
 - [x] All 131 existing tests still pass — no regressions
 - [x] TypeScript check passes with zero errors
+
+## Bug: 524 Timeout on File Upload + Phase Start
+
+- [x] Diagnose root cause: file extraction (PDF/DOCX) + LLM call in single tRPC request exceeds 524s timeout
+- [x] Pre-extract file text at upload time and cache in DB (extractedText column on uploads table)
+- [x] Generate and apply migration for extractedText column (0008_late_shocker.sql)
+- [x] Update file upload endpoint to trigger extraction immediately after upload (background, non-blocking)
+- [x] Update buildSourceContentFromUploads to use cached extractedText when available (skip re-extraction)
+- [x] Add fallback: if extractedText is null, extract on-demand (backward compat)
+- [x] Add updateUploadExtractedText to vi.mock in workflow.test.ts to suppress warning
+- [x] All 135 tests pass with no warnings

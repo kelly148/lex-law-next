@@ -57,6 +57,13 @@
       "when": 1776514229485,
       "tag": "0007_youthful_black_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1776627679511,
+      "tag": "0008_late_shocker",
+      "breakpoints": true
     }
   ]
 }

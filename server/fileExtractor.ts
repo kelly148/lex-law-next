@@ -112,11 +112,22 @@ export async function extractFileText(upload: UploadRecord): Promise<string> {
 }
 
 /**
+ * Extended upload record that may include pre-extracted text from the DB.
+ */
+export interface UploadRecordWithCache extends UploadRecord {
+  extractedText?: string | null;
+}
+
+/**
  * Extract text from multiple uploaded files and combine into a single
  * source content string suitable for passing to an LLM.
+ *
+ * Uses cached extractedText from the DB when available (set at upload time)
+ * to avoid re-downloading and re-parsing files during phase start, which
+ * would cause 524 gateway timeouts on large PDFs/DOCXs.
  */
 export async function buildSourceContentFromUploads(
-  uploads: UploadRecord[],
+  uploads: UploadRecordWithCache[],
   additionalContext?: string,
 ): Promise<string> {
   if (uploads.length === 0 && !additionalContext) return "";
@@ -126,7 +137,10 @@ export async function buildSourceContentFromUploads(
   if (uploads.length > 0) {
     const extractedParts = await Promise.all(
       uploads.map(async (upload) => {
-        const text = await extractFileText(upload);
+        // Use cached text if available (pre-extracted at upload time)
+        const text = upload.extractedText?.trim()
+          ? upload.extractedText.trim()
+          : await extractFileText(upload);
         return `=== Document: ${upload.fileName} ===\n\n${text}`;
       })
     );

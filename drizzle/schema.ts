@@ -140,6 +140,8 @@ export const uploads = mysqlTable("uploads", {
   fileUrl: text("fileUrl").notNull(),
   contentType: varchar("contentType", { length: 128 }),
   fileSize: int("fileSize"),
+  // Pre-extracted text content cached at upload time to avoid timeout during phase start
+  extractedText: text("extractedText"),
   uploadedBy: int("uploadedBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

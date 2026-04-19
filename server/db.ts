@@ -360,6 +360,12 @@ export async function getUploadsByPhase(matterId: string, phaseName: string) {
     .orderBy(desc(uploads.createdAt));
 }
 
+export async function updateUploadExtractedText(uploadId: number, extractedText: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(uploads).set({ extractedText }).where(eq(uploads.id, uploadId));
+}
+
 // ── Matter Delete / Archive Helpers ───────────────────────────────────────────
 
 /** Hard-delete a matter and all related rows (cascade). */

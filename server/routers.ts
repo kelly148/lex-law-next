@@ -16,9 +16,10 @@ import {
   createUpload, getUploadsByPhase,
   collectPriorPhaseOutputs,
   createFolder, listFolders, renameFolder, deleteFolder,
+  updateUploadExtractedText,
 } from "./db";
 import { storagePut } from "./storage";
-import { buildSourceContentFromUploads } from "./fileExtractor";
+import { buildSourceContentFromUploads, extractFileText } from "./fileExtractor";
 import {
   runSingleModel, runCompetitiveDraft, runSingleModelDraft,
   runRevision, runReviewCycle, runFormattingPass,
@@ -984,6 +985,20 @@ const uploadRouter = router({
         fileSize: input.fileSize,
         uploadedBy: ctx.user.id,
       });
+
+      // Pre-extract text immediately at upload time so phase start doesn't timeout.
+      // Run extraction in background — don't await so upload response is instant.
+      if (upload?.id) {
+        extractFileText({
+          id: upload.id,
+          fileName: input.fileName,
+          fileUrl: url,
+          contentType: input.contentType || "application/octet-stream",
+        })
+          .then((text) => updateUploadExtractedText(upload.id, text))
+          .catch((err) => console.error(`[upload] Pre-extraction failed for ${input.fileName}:`, err.message));
+      }
+
       return upload;
     }),
 
