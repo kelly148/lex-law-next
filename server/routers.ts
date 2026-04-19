@@ -317,10 +317,8 @@ const phaseRouter = router({
         ? await buildSourceContentFromUploads(uploads as any, input.context)
         : undefined;
 
-      // For the Final Legal Document, also collect all completed prior phase outputs
-      const priorPhaseContent = phaseName === "agreement"
-        ? await collectPriorPhaseOutputs(input.matterId, "agreement")
-        : undefined;
+      // Collect all completed prior phase outputs for context chaining (all phases, not just agreement)
+      const priorPhaseContent = await collectPriorPhaseOutputs(input.matterId, phaseName);
 
       // Merge: prior phase outputs + extracted file content + manual sourceContent
       const sourceParts = [priorPhaseContent, extractedSource, input.sourceContent].filter(Boolean);
@@ -827,10 +825,8 @@ async function startCompetitiveDraft(
     ? await buildSourceContentFromUploads(uploads as any, context)
     : undefined;
 
-  // For the Final Legal Document, also collect all completed prior phase outputs
-  const priorPhaseContent = phaseName === "agreement"
-    ? await collectPriorPhaseOutputs(matterId, "agreement")
-    : undefined;
+  // Collect all completed prior phase outputs for context chaining (all phases, not just agreement)
+  const priorPhaseContent = await collectPriorPhaseOutputs(matterId, phaseName);
 
   // Merge: prior phase outputs + extracted file content + manual sourceContent
   const sourceParts = [priorPhaseContent, extractedSource, sourceContent].filter(Boolean);

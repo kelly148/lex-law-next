@@ -210,3 +210,24 @@
 - [x] Show folder badge on matter list items (colored pill)
 - [x] Archived matters shown under Archived filter (not mixed with active)
 - [x] Write vitest tests for matter delete/archive/unarchive and folder CRUD (13 tests) — 131 tests total
+
+## Phase Chaining (Auto-Context Carry-Forward)
+
+### DB Schema
+- [x] No schema changes needed — collectPriorPhaseOutputs already uses phaseOrder and officialFinalVersion
+
+### Backend
+- [x] Remove agreement-only gate in selectModel procedure — now calls collectPriorPhaseOutputs for ALL phases
+- [x] Remove agreement-only gate in startCompetitiveDraft function — now calls collectPriorPhaseOutputs for ALL phases
+- [x] collectPriorPhaseOutputs already handles: officialFinalVersion → isSelected fallback → latest version fallback
+- [x] Prior phase outputs merged with extracted uploads and manual context before prompt construction
+
+### Frontend
+- [x] Update PhaseContent idle state prior-phase notice to show for ALL phases (not just agreement)
+- [x] Notice shows completed prior phases by label with message "No additional input is required to proceed"
+- [x] Notice shows incomplete prior phases that will not be included
+- [x] Notice hidden for first phase (Intake) where there are no prior phases
+
+### Tests
+- [x] All 131 existing tests still pass — no regressions
+- [x] TypeScript check passes with zero errors

@@ -1266,3 +1266,169 @@ describe("agreement full_competitive path", () => {
     expect(userPromptArg).toContain("Attorney notes for agreement");
   });
 });
+
+// ── Phase Chaining: All Phases Receive Prior Phase Outputs ────────────
+
+describe("phase chaining: non-agreement phases receive prior phase outputs", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // Restore default mock implementations cleared by clearAllMocks
+    const db = await import("./db");
+    const llm = await import("./llm");
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValue(undefined);
+    vi.mocked(db.updatePhaseWorkflowState).mockResolvedValue(undefined);
+    vi.mocked(db.updatePhaseFields).mockResolvedValue(undefined);
+    vi.mocked(db.createVersion).mockResolvedValue(undefined);
+    vi.mocked(db.getLatestVersionNumber).mockResolvedValue(0);
+    vi.mocked(db.getUploadsByPhase).mockResolvedValue([] as any);
+    vi.mocked(llm.runSingleModel).mockResolvedValue({ provider: "claude", providerLabel: "Claude", content: "Mock single model output" } as any);
+    vi.mocked(llm.runSingleModelDraft).mockResolvedValue({ provider: "gpt", providerLabel: "GPT", content: "Mock draft output" } as any);
+    vi.mocked(llm.runCompetitiveDraft).mockResolvedValue([
+      { provider: "claude", providerLabel: "Claude", content: "Mock competitive draft" },
+      { provider: "gpt", providerLabel: "GPT", content: "Mock competitive draft 2" },
+      { provider: "gemini", providerLabel: "Gemini", content: "Mock competitive draft 3" },
+    ] as any);
+  });
+
+  it("selectModel for planning phase calls collectPriorPhaseOutputs with 'planning'", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+    const llm = await import("./llm");
+
+    // Planning phase in model_selection state
+    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+      phaseName: "planning",
+      workflowState: "model_selection",
+      activeWorkflowMode: "single_model",
+    }) as any);
+
+    vi.mocked(db.getUploadsByPhase).mockResolvedValueOnce([] as any);
+
+    // Prior phases (intake + issues) are complete
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+      "=== INTAKE ===\n\nIntake output\n\n---\n\n=== ISSUES ===\n\nIssues output"
+    );
+
+    const result = await caller.phase.selectModel({
+      matterId: "test-matter-123",
+      phaseName: "planning",
+      modelId: "claude",
+    });
+
+    expect(result.success).toBe(true);
+    // collectPriorPhaseOutputs should be called with "planning" (not "agreement")
+    expect(vi.mocked(db.collectPriorPhaseOutputs)).toHaveBeenLastCalledWith(
+      "test-matter-123", "planning"
+    );
+    // The userPrompt should contain the prior phase content
+    const runSingleModelCall = vi.mocked(llm.runSingleModel).mock.calls.at(-1);
+    const userPromptArg = runSingleModelCall?.[2] ?? "";
+    expect(userPromptArg).toContain("Intake output");
+    expect(userPromptArg).toContain("Issues output");
+  });
+
+  it("selectModel for engagement phase merges prior outputs + manual context", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+    const llm = await import("./llm");
+
+    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+      phaseName: "engagement",
+      workflowState: "model_selection",
+      activeWorkflowMode: "single_model_draft",
+    }) as any);
+
+    vi.mocked(db.getUploadsByPhase).mockResolvedValueOnce([] as any);
+
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+      "=== INTAKE ===\n\nClient: John Kinsey, Property Purchase"
+    );
+
+    const result = await caller.phase.selectModel({
+      matterId: "test-matter-123",
+      phaseName: "engagement",
+      modelId: "gpt",
+      context: "Focus on HOA disclosure requirements",
+    });
+
+    expect(result.success).toBe(true);
+    expect(vi.mocked(db.collectPriorPhaseOutputs)).toHaveBeenLastCalledWith(
+      "test-matter-123", "engagement"
+    );
+    // The userPrompt should contain the prior phase content (intake output)
+    const draftCall = vi.mocked(llm.runSingleModelDraft).mock.calls.at(-1);
+    const userPromptArg = draftCall?.[2] ?? "";
+    expect(userPromptArg).toContain("John Kinsey");
+  });
+
+  it("selectModel for issues phase calls collectPriorPhaseOutputs with 'issues'", async () => {
+    // issues defaults to single_model mode — startPhase transitions to model_selection,
+    // then selectModel is called. collectPriorPhaseOutputs is called in selectModel.
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+    const llm = await import("./llm");
+
+    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+      phaseName: "issues",
+      workflowState: "model_selection",
+      activeWorkflowMode: "single_model",
+    }) as any);
+
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+      "=== INTAKE ===\n\nIntake facts and context"
+    );
+
+    const result = await caller.phase.selectModel({
+      matterId: "test-matter-123",
+      phaseName: "issues",
+      modelId: "claude",
+    });
+
+    expect(result.success).toBe(true);
+    // collectPriorPhaseOutputs should be called with "issues" (not "agreement")
+    expect(vi.mocked(db.collectPriorPhaseOutputs)).toHaveBeenLastCalledWith(
+      "test-matter-123", "issues"
+    );
+    // runSingleModel should have been called (issues in single_model mode)
+    expect(vi.mocked(llm.runSingleModel)).toHaveBeenCalled();
+    // The userPrompt should contain the intake content
+    const singleModelCall = vi.mocked(llm.runSingleModel).mock.calls.at(-1);
+    const userPromptArg = singleModelCall?.[2] ?? "";
+    expect(userPromptArg).toContain("Intake facts and context");
+  });
+
+  it("intake phase: selectModel calls collectPriorPhaseOutputs with 'intake' (returns undefined — no prior phases)", async () => {
+    // intake defaults to single_model mode — startPhase transitions to model_selection,
+    // then selectModel is called. collectPriorPhaseOutputs returns undefined for intake.
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+    const llm = await import("./llm");
+
+    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+      phaseName: "intake",
+      workflowState: "model_selection",
+      activeWorkflowMode: "single_model",
+    }) as any);
+
+    // collectPriorPhaseOutputs returns undefined for intake (no prior phases)
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(undefined);
+
+    const result = await caller.phase.selectModel({
+      matterId: "test-matter-123",
+      phaseName: "intake",
+      modelId: "claude",
+    });
+
+    expect(result.success).toBe(true);
+    // Should still be called — just returns undefined for intake (no prior phases)
+    expect(vi.mocked(db.collectPriorPhaseOutputs)).toHaveBeenLastCalledWith(
+      "test-matter-123", "intake"
+    );
+    // runSingleModel should have been called
+    expect(vi.mocked(llm.runSingleModel)).toHaveBeenCalled();
+  });
+});

@@ -255,24 +255,27 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
           )}
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Prior phase context notice for Final Legal Document */}
-          {phaseName === "agreement" && (() => {
+          {/* Prior phase context notice — shown for all phases that have at least one prior phase */}
+          {(() => {
+            const currentOrder = allPhases.find(p => p.phaseName === phaseName)?.phaseOrder ?? 0;
             const completedPriors = allPhases.filter(
-              (p) => p.phaseName !== "agreement" && p.status === "completed"
+              (p) => p.phaseOrder < currentOrder && p.status === "completed"
             );
             const incompletePriors = allPhases.filter(
-              (p) => p.phaseName !== "agreement" && p.status !== "completed" && p.status !== "skipped"
+              (p) => p.phaseOrder < currentOrder && p.status !== "completed" && p.status !== "skipped"
             );
+            if (currentOrder === 0 || (completedPriors.length === 0 && incompletePriors.length === 0)) return null;
             return (
               <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-2">
                 <div className="flex items-center gap-2 text-blue-800 font-medium text-sm">
                   <CheckCircle2 className="h-4 w-4" />
-                  Final Legal Document — Direct Access
+                  Prior Phase Context
                 </div>
                 {completedPriors.length > 0 ? (
                   <p className="text-sm text-blue-700">
-                    The following completed phase outputs will be automatically included as source material:
+                    The following completed phase outputs will be automatically included as context:
                     {" "}<span className="font-medium">{completedPriors.map(p => PHASE_CONFIG[p.phaseName as PhaseName]?.label ?? p.phaseName).join(", ")}</span>.
+                    No additional input is required to proceed.
                   </p>
                 ) : (
                   <p className="text-sm text-blue-700">
@@ -281,7 +284,7 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
                 )}
                 {incompletePriors.length > 0 && (
                   <p className="text-xs text-blue-600">
-                    Not included (not yet complete): {incompletePriors.map(p => PHASE_CONFIG[p.phaseName as PhaseName]?.label ?? p.phaseName).join(", ")}.
+                    Not yet complete (will not be included): {incompletePriors.map(p => PHASE_CONFIG[p.phaseName as PhaseName]?.label ?? p.phaseName).join(", ")}.
                   </p>
                 )}
               </div>
