@@ -439,3 +439,80 @@ export async function deleteFolder(folderId: string) {
   await db.delete(matterFolders).where(eq(matterFolders.folderId, folderId));
   return { success: true };
 }
+
+// ── Conditional State Transition (Phase 1 — preparatory; used by Phase 2 procedures) ──
+
+import { emitTelemetry } from "../shared/telemetry";
+import { TRPCError } from "@trpc/server";
+import { sql } from "drizzle-orm";
+import type { WorkflowState } from "../shared/workflow";
+import { parseIterativeMeta } from "../shared/schemas";
+
+/**
+ * Atomically transitions phase workflow state.
+ * Uses conditional UPDATE so concurrent requests cannot race past validation.
+ *
+ * @throws TRPCError('CONFLICT') if current state does not match expected.
+ */
+export async function updatePhaseWorkflowStateConditional(
+  phaseId: number,
+  expectedCurrentState: WorkflowState,
+  nextState: WorkflowState,
+  options: { matterId: string; phaseName: string; procedure: string }
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.execute(sql`
+    UPDATE phases
+    SET workflowState = ${nextState}, updatedAt = NOW()
+    WHERE id = ${phaseId} AND workflowState = ${expectedCurrentState}
+  `);
+
+  // affectedRows shape depends on driver; adapt per Drizzle/mysql2 return type
+  const affected = (result as any)[0]?.affectedRows ?? (result as any).rowsAffected ?? (result as any).affectedRows ?? 0;
+
+  if (affected === 0) {
+    // Read current state for diagnostics
+    const rows = await db.execute(sql`SELECT workflowState FROM phases WHERE id = ${phaseId}`);
+    const currentState = (rows as any)[0]?.[0]?.workflowState ?? "unknown";
+
+    emitTelemetry({
+      kind: "concurrency_conflict",
+      phaseId,
+      procedure: options.procedure,
+      expectedState: expectedCurrentState,
+      actualState: currentState,
+    });
+
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `Phase is in state '${currentState}', not '${expectedCurrentState}'. Another operation may be in progress.`,
+    });
+  }
+
+  emitTelemetry({
+    kind: "state_transition",
+    phaseId,
+    matterId: options.matterId,
+    phaseName: options.phaseName,
+    from: expectedCurrentState,
+    to: nextState,
+    procedure: options.procedure,
+  });
+}
+
+/**
+ * Read a phase row and parse its iterativeMeta JSON column through the Zod parser.
+ */
+export async function getPhaseWithMeta(phaseId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db.execute(sql`SELECT * FROM phases WHERE id = ${phaseId}`);
+  const row = (rows as any)[0]?.[0];
+  if (!row) throw new Error(`Phase ${phaseId} not found`);
+  return {
+    ...row,
+    iterativeMeta: parseIterativeMeta(row.iterativeMeta, { phaseId }),
+  };
+}
