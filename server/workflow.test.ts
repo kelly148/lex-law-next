@@ -626,7 +626,7 @@ describe("matter and phase routers", () => {
 
   // ── Single Model Draft Mode (engagement path) ────────────────────
 
-  it("test_iterative_review_fallback: engagement startPhase → startCompetitiveDraft (Phase 1 temporary)", async () => {
+  it("test_iterative_review_default: engagement startPhase → model_selection (Phase 2)", async () => {
     const { ctx } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const db = await import("./db");
@@ -644,10 +644,10 @@ describe("matter and phase routers", () => {
       phaseName: "engagement",
     });
 
-    // Phase 1: engagement defaults to iterative_review which falls through to startCompetitiveDraft
+    // Phase 2: engagement defaults to iterative_review → model_selection (initializes iterativeMeta)
     expect(result.success).toBe(true);
-    expect(result.versionNumber).toBe(1);
-    expect(result.drafts).toBe(3);
+    expect(result.workflowState).toBe("model_selection");
+    expect(result.mode).toBe("iterative_review");
   });
 
   it("test_single_model_draft_mode: engagement with override → model_selection", async () => {
@@ -925,7 +925,7 @@ describe("matter and phase routers", () => {
 
   // ── Agreement Mode Lock ───────────────────────────────────────────
 
-  it("test_agreement_mode_lock: reject non-full_competitive for agreement", async () => {
+  it("test_agreement_mode_override: agreement accepts any available mode override (Phase 2 lock removed)", async () => {
     const { ctx } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const db = await import("./db");
@@ -941,13 +941,15 @@ describe("matter and phase routers", () => {
       }) as any
     );
 
-    await expect(
-      caller.phase.startPhase({
-        matterId: "test-matter-123",
-        phaseName: "agreement",
-        workflowModeOverride: "single_model_draft",
-      })
-    ).rejects.toThrow("Final Legal Document cannot be downgraded from Full Recursive Review.");
+    // Phase 2: agreement mode lock removed — single_model_draft is accepted
+    const result = await caller.phase.startPhase({
+      matterId: "test-matter-123",
+      phaseName: "agreement",
+      workflowModeOverride: "single_model_draft",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.workflowState).toBe("model_selection");
   });
 
   // ── Phase Skip ────────────────────────────────────────────────────
@@ -1310,10 +1312,12 @@ describe("agreement full_competitive path", () => {
       "=== INTAKE ===\n\nClient intake details here"
     );
 
+    // Phase 2: agreement defaults to iterative_review, so we must explicitly override to full_competitive
     await caller.phase.startPhase({
       matterId: "test-matter-123",
       phaseName: "agreement",
       sourceContent: "Attorney notes for agreement",
+      workflowModeOverride: "full_competitive",
     });
 
     // The 2nd argument to runCompetitiveDraft is the userPrompt
@@ -1354,17 +1358,18 @@ describe("phase chaining: non-agreement phases receive prior phase outputs", () 
     const db = await import("./db");
     const llm = await import("./llm");
 
-    // Planning phase in model_selection state
-    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+    // Planning phase in model_selection state (single_model mode)
+    const planningPhase = mockPhase({
       phaseName: "planning",
       workflowState: "model_selection",
       activeWorkflowMode: "single_model",
-    }) as any);
+    });
+    vi.mocked(db.getPhase).mockResolvedValue(planningPhase as any);
 
-    vi.mocked(db.getUploadsByPhase).mockResolvedValueOnce([] as any);
+    vi.mocked(db.getUploadsByPhase).mockResolvedValue([] as any);
 
     // Prior phases (intake + issues) are complete
-    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValue(
       "=== INTAKE ===\n\nIntake output\n\n---\n\n=== ISSUES ===\n\nIssues output"
     );
 
@@ -1384,6 +1389,11 @@ describe("phase chaining: non-agreement phases receive prior phase outputs", () 
     const userPromptArg = runSingleModelCall?.[2] ?? "";
     expect(userPromptArg).toContain("Intake output");
     expect(userPromptArg).toContain("Issues output");
+
+    // Restore to default
+    vi.mocked(db.getPhase).mockResolvedValue(mockPhase({}) as any);
+    vi.mocked(db.getUploadsByPhase).mockResolvedValue([] as any);
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValue(undefined);
   });
 
   it("selectModel for engagement phase merges prior outputs + manual context", async () => {
@@ -1392,15 +1402,16 @@ describe("phase chaining: non-agreement phases receive prior phase outputs", () 
     const db = await import("./db");
     const llm = await import("./llm");
 
-    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+    const engagementPhase = mockPhase({
       phaseName: "engagement",
       workflowState: "model_selection",
       activeWorkflowMode: "single_model_draft",
-    }) as any);
+    });
+    vi.mocked(db.getPhase).mockResolvedValue(engagementPhase as any);
 
-    vi.mocked(db.getUploadsByPhase).mockResolvedValueOnce([] as any);
+    vi.mocked(db.getUploadsByPhase).mockResolvedValue([] as any);
 
-    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValue(
       "=== INTAKE ===\n\nClient: John Kinsey, Property Purchase"
     );
 
@@ -1419,6 +1430,11 @@ describe("phase chaining: non-agreement phases receive prior phase outputs", () 
     const draftCall = vi.mocked(llm.runSingleModelDraft).mock.calls.at(-1);
     const userPromptArg = draftCall?.[2] ?? "";
     expect(userPromptArg).toContain("John Kinsey");
+
+    // Restore to default
+    vi.mocked(db.getPhase).mockResolvedValue(mockPhase({}) as any);
+    vi.mocked(db.getUploadsByPhase).mockResolvedValue([] as any);
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValue(undefined);
   });
 
   it("selectModel for issues phase calls collectPriorPhaseOutputs with 'issues'", async () => {
@@ -1429,13 +1445,16 @@ describe("phase chaining: non-agreement phases receive prior phase outputs", () 
     const db = await import("./db");
     const llm = await import("./llm");
 
-    vi.mocked(db.getPhase).mockResolvedValueOnce(mockPhase({
+    const issuesPhase = mockPhase({
       phaseName: "issues",
       workflowState: "model_selection",
       activeWorkflowMode: "single_model",
-    }) as any);
+    });
+    vi.mocked(db.getPhase).mockResolvedValue(issuesPhase as any);
 
-    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValueOnce(
+    vi.mocked(db.getUploadsByPhase).mockResolvedValue([] as any);
+
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValue(
       "=== INTAKE ===\n\nIntake facts and context"
     );
 
@@ -1456,6 +1475,11 @@ describe("phase chaining: non-agreement phases receive prior phase outputs", () 
     const singleModelCall = vi.mocked(llm.runSingleModel).mock.calls.at(-1);
     const userPromptArg = singleModelCall?.[2] ?? "";
     expect(userPromptArg).toContain("Intake facts and context");
+
+    // Restore to default
+    vi.mocked(db.getPhase).mockResolvedValue(mockPhase({}) as any);
+    vi.mocked(db.getUploadsByPhase).mockResolvedValue([] as any);
+    vi.mocked(db.collectPriorPhaseOutputs).mockResolvedValue(undefined);
   });
 
   it("intake phase: selectModel calls collectPriorPhaseOutputs with 'intake' (returns undefined — no prior phases)", async () => {
