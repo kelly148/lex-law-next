@@ -272,7 +272,7 @@ export const iterativePhaseRouter = router({
       const userPrompt = await buildIterativeContext(input.matterId, phaseName, 'evaluator', roleContent);
       const promptTokens = estimateTokens(userPrompt);
 
-      return await runCanonicalMutation({
+      const mutationResult = await runCanonicalMutation({
         phaseId: phase.id,
         matterId: input.matterId,
         phaseName: input.phaseName,
@@ -346,6 +346,12 @@ export const iterativePhaseRouter = router({
           promptTokensEstimate: promptTokens,
         },
       });
+
+      return {
+        success: true as const,
+        workflowState: 'awaiting_evaluation_decisions' as const,
+        ...mutationResult,
+      };
     }),
 
   // ── Submit Evaluation Decisions (§11.3) ───────────────────────────
@@ -436,7 +442,7 @@ export const iterativePhaseRouter = router({
 
       const meta = parseIterativeMeta(phase.iterativeMeta, { phaseId: phase.id });
 
-      return await runCanonicalMutation({
+      const mutationResult = await runCanonicalMutation({
         phaseId: phase.id,
         matterId: input.matterId,
         phaseName: input.phaseName,
@@ -535,6 +541,12 @@ export const iterativePhaseRouter = router({
           promptTokensEstimate: promptTokens,
         },
       });
+
+      return {
+        success: true as const,
+        workflowState: 'awaiting_attorney_review' as const,
+        ...mutationResult,
+      };
     }),
 
   // ── Submit Manual Decisions (§10.2) ───────────────────────────────
@@ -584,7 +596,7 @@ export const iterativePhaseRouter = router({
 
       const meta = parseIterativeMeta(phase.iterativeMeta, { phaseId: phase.id });
 
-      return await runCanonicalMutation({
+      const mutationResult = await runCanonicalMutation({
         phaseId: phase.id,
         matterId: input.matterId,
         phaseName: input.phaseName,
@@ -703,6 +715,12 @@ export const iterativePhaseRouter = router({
           promptTokensEstimate: promptTokens,
         },
       });
+
+      return {
+        success: true as const,
+        workflowState: 'awaiting_attorney_review' as const,
+        ...mutationResult,
+      };
     }),
 
   // ── Accept Iterative Version (§12.5) ──────────────────────────────
@@ -857,7 +875,7 @@ export const iterativePhaseRouter = router({
 
       const promptTokens = estimateTokens(substantiveVersion.content);
 
-      return await runCanonicalMutation({
+      const fmtResult = await runCanonicalMutation({
         phaseId: phase.id,
         matterId: input.matterId,
         phaseName: input.phaseName,
@@ -905,14 +923,19 @@ export const iterativePhaseRouter = router({
             flags: llmResult.flags,
           };
         },
-        llmMeta: {
+         llmMeta: {
           model: 'claude',
           role: 'formatter',
           promptTokensEstimate: promptTokens,
         },
       });
-    }),
 
+      return {
+        success: true as const,
+        workflowState: 'awaiting_format_review' as const,
+        ...fmtResult,
+      };
+    }),
   // ── Accept Substantive Unformatted (§12.7 escape hatch) ──────────
   acceptSubstantiveUnformatted: protectedProcedure
     .input(phaseInputBase)
@@ -1001,7 +1024,7 @@ export const iterativePhaseRouter = router({
       const userPrompt = await buildIterativeContext(input.matterId, phaseName, 'generator', roleContent);
       const promptTokens = estimateTokens(userPrompt);
 
-      return await runCanonicalMutation({
+      const restartResult = await runCanonicalMutation({
         phaseId: phase.id,
         matterId: input.matterId,
         phaseName: input.phaseName,
@@ -1059,9 +1082,14 @@ export const iterativePhaseRouter = router({
           promptTokensEstimate: promptTokens,
         },
       });
-    }),
 
-  // ── Set Waiting On Client (§8.4) ─────────────────────────────────
+      return {
+        success: true as const,
+        workflowState: 'awaiting_attorney_review' as const,
+        ...restartResult,
+      };
+    }),
+  // ── Set Waiting On Client (§8.4) ──────────────────────────────────
   setWaitingOnClientIterative: protectedProcedure
     .input(phaseInputBase)
     .mutation(async ({ input }) => {
