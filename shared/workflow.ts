@@ -33,6 +33,7 @@ export const WORKFLOW_MODES = [
   "competitive_select",
   "single_model_draft",
   "full_competitive",
+  "iterative_review",
 ] as const;
 export type WorkflowMode = (typeof WORKFLOW_MODES)[number];
 
@@ -41,6 +42,7 @@ export const WORKFLOW_MODE_LABELS: Record<WorkflowMode, string> = {
   competitive_select: "Compare & Select",
   single_model_draft: "Simple Draft",
   full_competitive: "Full Recursive Review",
+  iterative_review: "Iterative Review",
 };
 
 export const WORKFLOW_MODE_DESCRIPTIONS: Record<WorkflowMode, string> = {
@@ -48,6 +50,7 @@ export const WORKFLOW_MODE_DESCRIPTIONS: Record<WorkflowMode, string> = {
   competitive_select: "All enabled models produce output. You select the best one.",
   single_model_draft: "One model drafts, you review and revise.",
   full_competitive: "All models draft competitively, then review and iterate.",
+  iterative_review: "One model drafts, others review and provide feedback. Attorney decides which feedback to apply. System regenerates with accepted changes.",
 };
 
 // ── Workflow States ─────────────────────────────────────────────────
@@ -67,6 +70,12 @@ export const WORKFLOW_STATES = [
   "formatting",
   "awaiting_format_review",
   "complete",
+  // iterative_review states (Phase 1 schema; procedures in Phase 2)
+  "awaiting_reviews",
+  "awaiting_feedback_action",
+  "evaluating_feedback",
+  "awaiting_evaluation_decisions",
+  "awaiting_manual_decisions",
 ] as const;
 export type WorkflowState = (typeof WORKFLOW_STATES)[number];
 
@@ -122,9 +131,9 @@ export const PHASE_CONFIG: Record<PhaseName, PhaseConfig> = {
     label: "Planning",
     stage: "analysis",
     order: 3,
-    defaultMode: "competitive_select",
-    escalatable: false,
-    availableModes: ["competitive_select"],
+    defaultMode: "single_model_draft",
+    escalatable: true,
+    availableModes: ["single_model_draft", "competitive_select", "iterative_review"],
     hasFormattingPass: false,
     isOptional: false,
   },
@@ -133,9 +142,9 @@ export const PHASE_CONFIG: Record<PhaseName, PhaseConfig> = {
     label: "Engagement Letter",
     stage: "document_generation",
     order: 4,
-    defaultMode: "single_model_draft",
+    defaultMode: "iterative_review",
     escalatable: true,
-    availableModes: ["single_model_draft", "competitive_select", "full_competitive"],
+    availableModes: ["single_model_draft", "competitive_select", "full_competitive", "iterative_review"],
     hasFormattingPass: false,
     isOptional: false,
   },
@@ -144,9 +153,9 @@ export const PHASE_CONFIG: Record<PhaseName, PhaseConfig> = {
     label: "Advisory Memo",
     stage: "document_generation",
     order: 5,
-    defaultMode: "single_model_draft",
+    defaultMode: "iterative_review",
     escalatable: true,
-    availableModes: ["single_model_draft", "competitive_select", "full_competitive"],
+    availableModes: ["single_model_draft", "competitive_select", "full_competitive", "iterative_review"],
     hasFormattingPass: false,
     isOptional: true,
   },
@@ -155,9 +164,9 @@ export const PHASE_CONFIG: Record<PhaseName, PhaseConfig> = {
     label: "Decision Matrix",
     stage: "document_generation",
     order: 6,
-    defaultMode: "single_model_draft",
+    defaultMode: "iterative_review",
     escalatable: true,
-    availableModes: ["single_model_draft", "competitive_select", "full_competitive"],
+    availableModes: ["single_model_draft", "competitive_select", "full_competitive", "iterative_review"],
     hasFormattingPass: false,
     isOptional: true,
   },
@@ -166,9 +175,9 @@ export const PHASE_CONFIG: Record<PhaseName, PhaseConfig> = {
     label: "Final Legal Document",
     stage: "document_generation",
     order: 7,
-    defaultMode: "full_competitive",
-    escalatable: false,
-    availableModes: ["full_competitive"],
+    defaultMode: "iterative_review",
+    escalatable: true,
+    availableModes: ["full_competitive", "iterative_review"],
     hasFormattingPass: true,
     isOptional: false,
   },
@@ -195,35 +204,28 @@ export const ENABLED_PROVIDERS = PROVIDERS.filter(p => p.enabled);
 
 /**
  * Check if a phase can start based on prerequisite completion.
- * Only "completed" status satisfies prerequisites.
- * "waiting_on_client" does NOT satisfy prerequisites.
- * Skipped optional phases are treated as satisfied.
+ *
+ * v2.3 §6 gate rules:
+ * - intake: always startable (first phase)
+ * - agreement: always startable (preserved exception; auto-collects prior outputs)
+ * - all others: require only intake to be completed or skipped.
+ *   No ordering constraints among issues/planning/engagement/memo/matrix.
+ * - "waiting_on_client" does NOT satisfy the intake prerequisite.
  */
 export function canStartPhase(
   phaseName: PhaseName,
-  allPhases: Array<{ phaseName: string; status: string; isOptional: number }>,
+  allPhases: Array<{ phaseName: string; status: string; isOptional?: number }>,
 ): boolean {
-  const config = PHASE_CONFIG[phaseName];
-  if (!config) return false;
-
-  // The Final Legal Document (agreement) can always be started from any phase.
-  // It auto-collects all completed prior phase outputs as source material.
+  if (phaseName === "intake") return true;
   if (phaseName === "agreement") return true;
 
-  // Check all prior phases
-  for (const prior of PHASE_NAMES) {
-    if (PHASE_ORDER[prior] >= PHASE_ORDER[phaseName]) break;
-
-    const priorPhase = allPhases.find(p => p.phaseName === prior);
-    if (!priorPhase) return false;
-
-    // Skipped optional phases are OK
-    if (priorPhase.status === "skipped" && priorPhase.isOptional) continue;
-
-    // Only "completed" satisfies prerequisites — NOT "waiting_on_client"
-    if (priorPhase.status !== "completed") return false;
+  const intake = allPhases.find(p => p.phaseName === "intake");
+  if (!intake || !['completed', 'skipped'].includes(intake.status)) {
+    return false;
   }
 
+  // Non-intake phases: startable once intake is done.
+  // No ordering constraints among issues/planning/engagement/memo/matrix.
   return true;
 }
 

@@ -35,6 +35,12 @@ const STATE_COLORS: Record<WorkflowState, string> = {
   formatting: "bg-blue-500 animate-pulse",
   awaiting_format_review: "bg-amber-500",
   complete: "bg-green-500",
+  // iterative_review states (Phase 2 UI)
+  awaiting_reviews: "bg-blue-500 animate-pulse",
+  awaiting_feedback_action: "bg-amber-500",
+  evaluating_feedback: "bg-blue-500 animate-pulse",
+  awaiting_evaluation_decisions: "bg-amber-500",
+  awaiting_manual_decisions: "bg-amber-500",
 };
 
 const STATE_LABELS: Record<WorkflowState, string> = {
@@ -53,6 +59,12 @@ const STATE_LABELS: Record<WorkflowState, string> = {
   formatting: "Formatting...",
   awaiting_format_review: "Review Formatting",
   complete: "Complete",
+  // iterative_review states (Phase 2 UI)
+  awaiting_reviews: "Awaiting Reviews...",
+  awaiting_feedback_action: "Review Feedback",
+  evaluating_feedback: "Evaluating Feedback...",
+  awaiting_evaluation_decisions: "Review Evaluations",
+  awaiting_manual_decisions: "Manual Selections",
 };
 
 const ACTIVE_STATES = new Set([
