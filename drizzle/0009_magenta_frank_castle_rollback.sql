@@ -1,22 +1,30 @@
 -- Rollback for 0009_magenta_frank_castle.sql
 -- Run ONLY if the migration needs to be reverted before Phase 4 ships.
+-- Idempotent: safe to run even if migration was never applied or was partially applied.
 
--- Drop indexes first (on tables that will be dropped)
-DROP INDEX `idx_fms_version` ON `feedback_manual_selections`;
-DROP INDEX `idx_fms_feedback` ON `feedback_manual_selections`;
-DROP INDEX `idx_feedback_evaluations_lookup` ON `feedback_evaluations`;
-
--- Drop FK constraint before dropping table
-ALTER TABLE `feedback_manual_selections` DROP FOREIGN KEY `feedback_manual_selections_feedbackId_feedback_id_fk`;
-
--- Drop new tables
+-- Drop new tables (CASCADE handles indexes and FK constraints automatically in MySQL/TiDB)
 DROP TABLE IF EXISTS `feedback_manual_selections`;
 DROP TABLE IF EXISTS `feedback_evaluations`;
 
 -- Remove phase column additions (reverse order of addition)
-ALTER TABLE `phases` DROP COLUMN `promptMode`;
-ALTER TABLE `phases` DROP COLUMN `iterativeMeta`;
-ALTER TABLE `phases` DROP COLUMN `initialGeneratorModel`;
+-- Use stored procedure pattern to make column drops idempotent
+SET @col_exists = (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'phases' AND column_name = 'promptMode');
+SET @sql = IF(@col_exists > 0, 'ALTER TABLE `phases` DROP COLUMN `promptMode`', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'phases' AND column_name = 'iterativeMeta');
+SET @sql = IF(@col_exists > 0, 'ALTER TABLE `phases` DROP COLUMN `iterativeMeta`', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_exists = (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'phases' AND column_name = 'initialGeneratorModel');
+SET @sql = IF(@col_exists > 0, 'ALTER TABLE `phases` DROP COLUMN `initialGeneratorModel`', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Restore workflowState enum to its pre-migration state.
 -- Any rows with new state values must be reset to a legacy state first.
