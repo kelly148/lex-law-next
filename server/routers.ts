@@ -208,7 +208,7 @@ const phaseRouter = router({
       phaseName: z.string(),
       context: z.string().optional(),
       sourceContent: z.string().optional(),
-      workflowModeOverride: z.enum(["single_model_draft", "competitive_select", "full_competitive"]).optional(),
+      workflowModeOverride: z.enum(["single_model_draft", "competitive_select", "full_competitive", "iterative_review"]).optional(),
     }))
     .mutation(async ({ input }) => {
       const phase = await getPhase(input.matterId, input.phaseName);
@@ -234,8 +234,9 @@ const phaseRouter = router({
       let activeMode: WorkflowMode = phase.activeWorkflowMode as WorkflowMode || config.defaultMode;
 
       if (input.workflowModeOverride) {
-        // Agreement mode lock: reject any override that is not full_competitive
-        if (phaseName === "agreement" && input.workflowModeOverride !== "full_competitive") {
+        // Agreement mode lock: reject any override that is not full_competitive or iterative_review
+        // Phase 1: expanded to accept iterative_review (new default). Phase 2 removes this lock entirely.
+        if (phaseName === "agreement" && input.workflowModeOverride !== "full_competitive" && input.workflowModeOverride !== "iterative_review") {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "Final Legal Document cannot be downgraded from Full Recursive Review.",
@@ -270,6 +271,11 @@ const phaseRouter = router({
 
         case "full_competitive":
           // Run all models in parallel (existing competitive flow)
+          return await startCompetitiveDraft(input.matterId, phaseName, input.sourceContent, input.context);
+
+        case "iterative_review":
+          // Phase 1 temporary: falls through to full_competitive behavior.
+          // Phase 2 replaces this with the iterative-review state machine.
           return await startCompetitiveDraft(input.matterId, phaseName, input.sourceContent, input.context);
 
         default:
