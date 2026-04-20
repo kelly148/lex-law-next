@@ -4,7 +4,10 @@ import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router, mergeRouters } from "./_core/trpc";
+import { iterativePhaseRouter } from './routers/iterativePhaseRouter';
+import { emitTelemetry } from '../shared/telemetry';
+import { parseIterativeMeta } from '../shared/schemas/iterativeMeta';
 import {
   createMatter, listMatters, getMatterByMatterId, renameMatter, updateClientName,
   deleteMatter, archiveMatter, unarchiveMatter, assignMatterToFolder,
@@ -190,7 +193,7 @@ const folderRouter = router({
     }),
 });
 
-const phaseRouter = router({
+const legacyPhaseRouter = router({
   get: protectedProcedure
     .input(z.object({ matterId: z.string(), phaseName: z.string() }))
     .query(async ({ input }) => {
@@ -209,6 +212,7 @@ const phaseRouter = router({
       context: z.string().optional(),
       sourceContent: z.string().optional(),
       workflowModeOverride: z.enum(["single_model_draft", "competitive_select", "full_competitive", "iterative_review"]).optional(),
+      initialModelId: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       const phase = await getPhase(input.matterId, input.phaseName);
@@ -234,22 +238,14 @@ const phaseRouter = router({
       let activeMode: WorkflowMode = phase.activeWorkflowMode as WorkflowMode || config.defaultMode;
 
       if (input.workflowModeOverride) {
-        // Agreement mode lock: reject any override that is not full_competitive or iterative_review
-        // Phase 1: expanded to accept iterative_review (new default). Phase 2 removes this lock entirely.
-        if (phaseName === "agreement" && input.workflowModeOverride !== "full_competitive" && input.workflowModeOverride !== "iterative_review") {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Final Legal Document cannot be downgraded from Full Recursive Review.",
-          });
-        }
-
+        // Phase 2: agreement mode lock removed — attorneys can select any available mode via Advanced disclosure
         if (config.escalatable && config.availableModes.includes(input.workflowModeOverride)) {
           activeMode = input.workflowModeOverride;
           await updatePhaseFields(input.matterId, input.phaseName, {
             activeWorkflowMode: activeMode,
           });
         } else if (!config.escalatable) {
-          // Non-escalatable phases ignore overrides silently (except agreement which throws above)
+          // Non-escalatable phases ignore overrides silently
         }
       }
 
@@ -270,13 +266,60 @@ const phaseRouter = router({
           return { success: true, workflowState: "model_selection" as const, mode: activeMode };
 
         case "full_competitive":
-          // Run all models in parallel (existing competitive flow)
+          // Legacy mode — emit telemetry per §3.1
+          emitTelemetry({ kind: 'legacy_mode_used', matterId: input.matterId, phaseName: input.phaseName, mode: 'full_competitive' });
           return await startCompetitiveDraft(input.matterId, phaseName, input.sourceContent, input.context);
 
-        case "iterative_review":
-          // Phase 1 temporary: falls through to full_competitive behavior.
-          // Phase 2 replaces this with the iterative-review state machine.
-          return await startCompetitiveDraft(input.matterId, phaseName, input.sourceContent, input.context);
+        case "iterative_review": {
+          // Phase 2: iterative-review state machine
+          // If initialModelId is provided, skip model_selection and go directly to drafting
+          if (input.initialModelId) {
+            const providerKey = input.initialModelId as ProviderKey;
+            const provider = ENABLED_PROVIDERS.find(p => p.key === providerKey);
+            if (!provider) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "Selected initial model is not available" });
+            }
+
+            // Store initial generator model and initialize iterativeMeta
+            await updatePhaseFields(input.matterId, input.phaseName, {
+              initialGeneratorModel: providerKey,
+              selectedModelId: providerKey,
+              iterativeMeta: {
+                iterationNumber: 0,
+                cycleNumber: 1,
+                currentVersionModel: providerKey,
+                lastEvaluatorModel: null,
+                lastRegeneratorModel: null,
+                feedbackCyclesCompleted: 0,
+                formatRejectionCount: 0,
+                preClientWaitState: null,
+                isIterativeLoop: true,
+              },
+            });
+
+            // Route to drafting — the actual LLM call happens via selectModel
+            await updatePhaseWorkflowState(input.matterId, input.phaseName, "model_selection");
+            return { success: true, workflowState: "model_selection" as const, mode: activeMode, initialModelId: providerKey };
+          }
+
+          // No initialModelId — go to model_selection for attorney to pick
+          // Initialize iterativeMeta with defaults
+          await updatePhaseFields(input.matterId, input.phaseName, {
+            iterativeMeta: {
+              iterationNumber: 0,
+              cycleNumber: 1,
+              currentVersionModel: null,
+              lastEvaluatorModel: null,
+              lastRegeneratorModel: null,
+              feedbackCyclesCompleted: 0,
+              formatRejectionCount: 0,
+              preClientWaitState: null,
+              isIterativeLoop: true,
+            },
+          });
+          await updatePhaseWorkflowState(input.matterId, input.phaseName, "model_selection");
+          return { success: true, workflowState: "model_selection" as const, mode: activeMode };
+        }
 
         default:
           throw new TRPCError({ code: "BAD_REQUEST", message: `Unknown workflow mode: ${activeMode}` });
@@ -314,6 +357,16 @@ const phaseRouter = router({
       await updatePhaseFields(input.matterId, input.phaseName, {
         selectedModelId: providerKey,
       });
+
+      // For iterative_review mode, also write to initialGeneratorModel and iterativeMeta.currentVersionModel
+      if (activeMode === "iterative_review") {
+        const phase2 = await getPhase(input.matterId, input.phaseName);
+        const meta = parseIterativeMeta(phase2?.iterativeMeta, { phaseId: phase2?.id ?? 0 });
+        await updatePhaseFields(input.matterId, input.phaseName, {
+          initialGeneratorModel: providerKey,
+          iterativeMeta: { ...meta, currentVersionModel: providerKey },
+        });
+      }
 
       const prompt = PHASE_PROMPTS[phaseName];
       if (!prompt) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid phase name" });
@@ -361,8 +414,8 @@ const phaseRouter = router({
           await updatePhaseWorkflowState(input.matterId, input.phaseName, "model_selection");
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: err.message });
         }
-      } else if (activeMode === "single_model_draft") {
-        // Drafting state
+      } else if (activeMode === "single_model_draft" || activeMode === "iterative_review") {
+        // Drafting state — shared by single_model_draft and iterative_review (initial draft)
         await updatePhaseWorkflowState(input.matterId, input.phaseName, "drafting");
 
         try {
@@ -376,8 +429,24 @@ const phaseRouter = router({
             provider: result.provider,
             content: result.content || result.error || "Draft generation failed",
             isSelected: 1,
-            metadata: { providerLabel: result.providerLabel, error: result.error },
+            metadata: {
+              providerLabel: result.providerLabel,
+              error: result.error,
+              iteration: activeMode === "iterative_review" ? 1 : undefined,
+              cycleNumber: activeMode === "iterative_review" ? 1 : undefined,
+              generatorProvider: providerKey,
+              isFormatted: false,
+            },
           });
+
+          // For iterative_review, update iterativeMeta to reflect iteration 1
+          if (activeMode === "iterative_review") {
+            const currentPhase = await getPhase(input.matterId, input.phaseName);
+            const meta = parseIterativeMeta(currentPhase?.iterativeMeta, { phaseId: currentPhase?.id ?? 0 });
+            await updatePhaseFields(input.matterId, input.phaseName, {
+              iterativeMeta: { ...meta, iterationNumber: 1, currentVersionModel: providerKey },
+            });
+          }
 
           // Transition to awaiting_attorney_review
           await updatePhaseWorkflowState(input.matterId, input.phaseName, "awaiting_attorney_review", {
@@ -812,6 +881,9 @@ const phaseRouter = router({
       };
     }),
 });
+
+// ── Merged Phase Router (Pattern A: flat merge via t.mergeRouters) ────
+const phaseRouter = mergeRouters(legacyPhaseRouter, iterativePhaseRouter);
 
 // ── Competitive Draft Helper ────────────────────────────────────────
 

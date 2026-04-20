@@ -475,3 +475,102 @@ export function parseFormattingFlags(content: string): string[] {
 
   return flags;
 }
+
+// ── Iterative Review LLM Functions (Phase 2) ────────────────────────
+
+import {
+  REVIEW_SYSTEM_PROMPT,
+  EVALUATION_SYSTEM_PROMPT,
+  REGENERATION_SYSTEM_PROMPT,
+} from './iterativeReviewPrompts';
+
+/**
+ * Single reviewer call for iterative_review mode.
+ * Returns raw prose feedback (no JSON parsing — per §9.2, category='review', raw output stored).
+ */
+export async function runSingleReview(
+  reviewerModelId: ProviderKey,
+  userPrompt: string,
+): Promise<{ provider: string; content: string; error?: string }> {
+  try {
+    const content = await callProvider(
+      reviewerModelId,
+      REVIEW_SYSTEM_PROMPT,
+      userPrompt,
+      16384,
+      false,
+    );
+    return { provider: reviewerModelId, content };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { provider: reviewerModelId, content: '', error: message };
+  }
+}
+
+/**
+ * Evaluator call for iterative_review mode.
+ * Returns structured JSON (point-by-point recommendations per §11.2).
+ * JSON parsing is the caller's responsibility (Zod boundary in canonicalMutation).
+ */
+export async function runFeedbackEvaluation(
+  evaluatorModelId: ProviderKey,
+  userPrompt: string,
+): Promise<{ provider: string; rawOutput: string; error?: string }> {
+  try {
+    const rawOutput = await callProvider(
+      evaluatorModelId,
+      EVALUATION_SYSTEM_PROMPT,
+      userPrompt,
+      16384,
+      true, // JSON mode
+    );
+    return { provider: evaluatorModelId, rawOutput };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { provider: evaluatorModelId, rawOutput: '', error: message };
+  }
+}
+
+/**
+ * Regenerator call for iterative_review mode.
+ * Applies attorney-selected changes at anchored locations per §11.4.
+ * Returns structured JSON with revisedDocument + appliedChanges + unresolvedAnchors.
+ */
+export async function runRevisionWithDecisions(
+  regeneratorModelId: ProviderKey,
+  userPrompt: string,
+): Promise<{ provider: string; rawOutput: string; error?: string }> {
+  try {
+    const rawOutput = await callProvider(
+      regeneratorModelId,
+      REGENERATION_SYSTEM_PROMPT,
+      userPrompt,
+      16384,
+      true, // JSON mode
+    );
+    return { provider: regeneratorModelId, rawOutput };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { provider: regeneratorModelId, rawOutput: '', error: message };
+  }
+}
+
+/**
+ * Formatting pass with explicit model parameter (§12.6).
+ * v1 default is Claude; function accepts any provider for future flexibility.
+ */
+export async function runFormattingPassV2(
+  modelId: ProviderKey,
+  substantiveContent: string,
+  adjustmentNotes?: string,
+): Promise<FormattingResult> {
+  let userPrompt = `Please apply the formatting pass to the following document:\n\n${substantiveContent}`;
+
+  if (adjustmentNotes) {
+    userPrompt += `\n\n## Formatting Adjustment Notes\n\nThe attorney has requested the following formatting adjustments:\n${adjustmentNotes}`;
+  }
+
+  const content = await callProvider(modelId, FORMATTING_PASS_PROMPT, userPrompt, 16384, false);
+  const flags = parseFormattingFlags(content);
+  return { content, flags };
+}

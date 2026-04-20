@@ -242,3 +242,40 @@
 - [x] Add fallback: if extractedText is null, extract on-demand (backward compat)
 - [x] Add updateUploadExtractedText to vi.mock in workflow.test.ts to suppress warning
 - [x] All 135 tests pass with no warnings
+
+## v2.3 Rebuild — Phase 2: Backend Procedures and LLM Integration
+
+### Step 1: Token Estimator
+- [x] Create server/tokens.ts with estimateTokens and truncateToTokenBudget
+- [x] Create server/tokens.test.ts with estimator and truncation tests
+
+### Step 2: Context Builder
+- [x] Create server/contextBuilder.ts with buildUserPrompt and accumulateWithBudget
+- [x] Create server/contextBuilder.test.ts with ordering, sorting, truncation, omission tests
+
+### Step 3: System Prompts
+- [x] Create server/iterativeReviewPrompts.ts with REVIEW, EVALUATION, REGENERATION prompts
+
+### Step 4: LLM Functions
+- [x] Append runSingleReview, runFeedbackEvaluation, runRevisionWithDecisions, runFormattingPassV2 to server/llm.ts
+- [x] Create server/llm-iterative.test.ts with tests for new functions (mocked LLM responses)
+
+### Step 5: Canonical Mutation Helper
+- [x] Create server/canonicalMutation.ts with runCanonicalMutation
+- [x] Create server/canonicalMutation.test.ts with happy path, error recovery, concurrency, telemetry tests
+
+### Step 6: Iterative Phase Router
+- [x] Create server/routers/iterativePhaseRouter.ts with all 10 procedures
+- [x] Create server/routers/iterativePhaseRouter.test.ts with per-procedure tests
+
+### Step 7: Router Merge + Targeted Edits
+- [x] Merge iterativePhaseRouter into routers.ts via t.mergeRouters (NOT ._def.procedures)
+- [x] Update startPhase Zod input to add initialModelId + handler update for iterative_review
+- [x] Update selectModel to write initialGeneratorModel + iterativeMeta.currentVersionModel
+- [x] Remove agreement-to-full_competitive lock throw
+- [x] Add legacy_mode_used telemetry on full_competitive invocation
+
+### Step 8: Integration Test
+- [x] Full end-to-end backend test: create matter → intake → engagement iterative_review → requestFeedback → evaluateFeedback → submitEvaluationDecisions → acceptIterativeVersion
+- [x] Regression: single_model_draft still works
+- [x] Regression: full_competitive still works
