@@ -279,3 +279,26 @@
 - [x] Full end-to-end backend test: create matter → intake → engagement iterative_review → requestFeedback → evaluateFeedback → submitEvaluationDecisions → acceptIterativeVersion
 - [x] Regression: single_model_draft still works
 - [x] Regression: full_competitive still works
+
+## v2.3 Rebuild — Phase 3: Frontend UI
+
+- [ ] Create shared/strings.ts with all 18 user-facing strings per §23
+- [ ] Create client/src/lib/anchorLocator.ts DOM tree-walker utility
+- [ ] Create client/src/lib/anchorLocator.test.ts
+- [ ] Create client/src/lib/rehypeParagraphIds.ts rehype plugin
+- [ ] Create client/src/components/iterative/ directory
+- [ ] Create client/src/components/iterative/ModelPicker.tsx + tests
+- [ ] Create client/src/components/iterative/IterationCounter.tsx + tests
+- [ ] Create client/src/components/iterative/AnchorDisplay.tsx + tests
+- [ ] Create client/src/components/iterative/UnresolvedAnchorsPanel.tsx + tests
+- [ ] Create client/src/components/iterative/FeedbackPanels.tsx + tests
+- [ ] Create client/src/components/iterative/SelectedChangesTray.tsx + tests
+- [ ] Create client/src/components/iterative/EvaluationPanel.tsx + tests
+- [ ] Create client/src/components/iterative/FormattingReview.tsx + tests (escape hatch promotion after 3 rejects)
+- [ ] Create client/src/hooks/useIterativeReview.ts + tests
+- [ ] Update client/src/components/PhaseContent.tsx additively for 8 new states
+- [ ] Create client/src/components/PhaseContent.test.tsx
+- [ ] Add advanced mode disclosure for full_competitive in phase idle screen
+- [ ] Verify no internal state names appear in component JSX (grep check)
+- [ ] All Phase 1 + Phase 2 + Phase 3 tests pass
+- [ ] tsc --noEmit passes

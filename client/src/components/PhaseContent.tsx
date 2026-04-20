@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -6,15 +7,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { trpc } from "@/lib/trpc";
 import {
   PHASE_CONFIG, OPTIONAL_PHASES, WORKFLOW_MODE_LABELS, WORKFLOW_MODE_DESCRIPTIONS,
-  type PhaseName, type WorkflowState, type WorkflowMode,
+  type PhaseName, type WorkflowState, type WorkflowMode, type ProviderKey, type PhaseConfig,
 } from "@shared/workflow";
 import {
-  Play, SkipForward, Loader2, AlertTriangle, CheckCircle2, Clock, Download,
+  Play, SkipForward, Loader2, AlertTriangle, CheckCircle2, Clock, Download, ChevronDown,
 } from "lucide-react";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import DraftComparison from "./DraftComparison";
 import AttorneyReview from "./AttorneyReview";
@@ -22,7 +34,25 @@ import ModelSelector from "./ModelSelector";
 import AttorneyDraftReview from "./AttorneyDraftReview";
 import FormattingReview from "./FormattingReview";
 import FileDropZone from "./FileDropZone";
-import { Streamdown } from "streamdown";
+import { Streamdown, defaultRehypePlugins } from "streamdown";
+// ── Iterative components ────────────────────────────────────────────
+import IterationCounter from "./iterative/IterationCounter";
+import UnresolvedAnchorsPanel from "./iterative/UnresolvedAnchorsPanel";
+import FeedbackPanels, { type FeedbackItem } from "./iterative/FeedbackPanels";
+import SelectedChangesTray from "./iterative/SelectedChangesTray";
+import EvaluationPanel from "./iterative/EvaluationPanel";
+import IterativeFormattingReview from "./iterative/FormattingReview";
+import ModelPicker, { getDefaultModel } from "./iterative/ModelPicker";
+import { useIterativeReview, pointByPointItemsToDecisions } from "@/hooks/useIterativeReview";
+import { rehypeParagraphIds } from "@/lib/rehypeParagraphIds";
+import {
+  STATE_LABELS, LOADING_LABELS, BUTTON_LABELS, CONFIRM_LABELS,
+  unresolvedAnchorsBanner, UNRESOLVED_ANCHORS_LINK,
+} from "@shared/strings";
+import { parseIterativeMeta } from "@shared/schemas/iterativeMeta";
+import { parseVersionMetadata, type UnresolvedAnchor } from "@shared/schemas/versionMetadata";
+import { parsePointByPoint, type PointByPointItem } from "@shared/schemas/pointByPoint";
+import type { ManualSelectionInput } from "@shared/schemas/manualSelection";
 
 interface Phase {
   id: number;
@@ -39,6 +69,7 @@ interface Phase {
   isOptional: number;
   isStale: number;
   workflowData: any;
+  iterativeMeta?: any;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -91,11 +122,632 @@ function DownloadDocxButton({ matterId, phaseName, phaseLabel }: { matterId: str
   );
 }
 
+// ── Iterative loading spinner ────────────────────────────────────────
+function IterativeLoadingCard({ label, message }: { label: string; message: string }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="font-serif text-xl">{label}</CardTitle>
+          <Badge className="bg-blue-500 text-white">
+            <Loader2 className="h-3 w-3 animate-spin mr-1" /> Processing
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col items-center py-12 text-muted-foreground">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+          <p className="text-lg font-medium">{message}</p>
+          <p className="text-sm mt-2">This may take a moment. The page will update automatically.</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Iterative draft review (awaiting_attorney_review in iterative_review mode) ──
+function IterativeDraftReview({
+  matterId,
+  phase,
+  config,
+  onRefresh,
+}: {
+  matterId: string;
+  phase: Phase;
+  config: PhaseConfig;
+  onRefresh: () => void;
+}) {
+  const phaseName = phase.phaseName;
+  const iterativeMeta = parseIterativeMeta(phase.iterativeMeta, { phaseId: phase.id });
+
+  // Fetch the latest version for this phase
+  const phaseQuery = trpc.phase.get.useQuery(
+    { matterId, phaseName },
+    { refetchInterval: false }
+  );
+  const versions = phaseQuery.data?.versions ?? [];
+  const latestVersion = versions.reduce(
+    (best: any, v: any) => (!best || v.versionNumber > best.versionNumber ? v : best),
+    null as any
+  );
+  const versionMeta = latestVersion
+    ? parseVersionMetadata(latestVersion.metadata, { versionId: latestVersion.id })
+    : null;
+  const unresolvedAnchors: UnresolvedAnchor[] = versionMeta?.unresolvedAnchors ?? [];
+
+  // Draft container ref for anchor scroll
+  const draftContainerRef = useRef<HTMLDivElement>(null);
+
+  // Stable rehypePlugins list
+  const rehypePlugins = useMemo(
+    () => [...Object.values(defaultRehypePlugins), rehypeParagraphIds] as any,
+    []
+  );
+
+  // Iterative mutations
+  const iterative = useIterativeReview(
+    { matterId, phaseName },
+    onRefresh
+  );
+
+  // Revision notes state
+  const [revisionNotes, setRevisionNotes] = useState("");
+  const [showRevisionInput, setShowRevisionInput] = useState(false);
+
+  // Restart model picker state
+  const [restartModel, setRestartModel] = useState<ProviderKey | "">("");
+  const [showUnresolvedPanel, setShowUnresolvedPanel] = useState(false);
+
+  const currentVersionModel = (iterativeMeta.currentVersionModel ?? "") as ProviderKey | "";
+  const versionNumber = latestVersion?.versionNumber ?? 1;
+
+  const handleRequestFeedback = useCallback(() => {
+    iterative.requestFeedback({ versionNumber });
+  }, [iterative, versionNumber]);
+
+  const handleRevise = useCallback(() => {
+    if (!revisionNotes.trim()) {
+      toast.error("Please enter revision notes.");
+      return;
+    }
+    // Use the existing requestRevision procedure (single_model_draft path)
+    // For iterative mode we use requestFeedback; revision notes go as context
+    // The spec §16.2 shows "Revise with my notes" triggers requestRevision
+    trpc.phase.requestRevision.useMutation;
+    // We call via trpc directly — handled by the inline mutation below
+  }, [revisionNotes]);
+
+  // requestRevision is a separate mutation (not in useIterativeReview)
+  const requestRevision = trpc.phase.requestRevision.useMutation({
+    onSuccess: () => { toast.success("Revision requested"); onRefresh(); },
+    onError: (err) => toast.error(err.message),
+  });
+
+  if (phaseQuery.isLoading) {
+    return <IterativeLoadingCard label={config.label} message="Loading draft..." />;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="font-serif text-xl">{config.label}</CardTitle>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="secondary">{STATE_LABELS.awaiting_attorney_review}</Badge>
+            <IterationCounter
+              cycleNumber={iterativeMeta.cycleNumber}
+              iterationNumber={iterativeMeta.iterationNumber}
+            />
+          </div>
+        </div>
+
+        {/* Unresolved anchors banner */}
+        {unresolvedAnchors.length > 0 && !showUnresolvedPanel && (
+          <div className="flex items-center gap-2 text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-3">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="text-sm font-medium">
+              {unresolvedAnchorsBanner(unresolvedAnchors.length, unresolvedAnchors.length)}
+            </span>
+            <Button
+              variant="link"
+              size="sm"
+              className="text-amber-700 p-0 h-auto"
+              onClick={() => setShowUnresolvedPanel(true)}
+            >
+              {UNRESOLVED_ANCHORS_LINK}
+            </Button>
+          </div>
+        )}
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {/* Unresolved anchors detail panel */}
+        {showUnresolvedPanel && unresolvedAnchors.length > 0 && (
+          <UnresolvedAnchorsPanel
+            unresolvedAnchors={unresolvedAnchors}
+            onAcceptPartial={() => setShowUnresolvedPanel(false)}
+            onApplyManually={() => {
+              setShowUnresolvedPanel(false);
+              toast.info("Apply manually: use revision notes below to address unresolved changes.");
+              setShowRevisionInput(true);
+            }}
+            onReDecide={() => setShowUnresolvedPanel(false)}
+            disabled={iterative.anyPending}
+          />
+        )}
+
+        {/* Draft content */}
+        {latestVersion ? (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-muted-foreground">
+                Version {latestVersion.versionNumber} · {latestVersion.provider}
+              </p>
+            </div>
+            <ScrollArea className="h-[400px] rounded-lg border p-4">
+              <div ref={draftContainerRef} className="prose prose-sm max-w-none">
+                <Streamdown rehypePlugins={rehypePlugins}>
+                  {latestVersion.content}
+                </Streamdown>
+              </div>
+            </ScrollArea>
+          </div>
+        ) : (
+          <p className="text-muted-foreground">No draft available yet.</p>
+        )}
+
+        {/* Revision notes input (shown on demand) */}
+        {showRevisionInput && (
+          <div className="space-y-2">
+            <Label htmlFor="revision-notes">Revision notes</Label>
+            <Textarea
+              id="revision-notes"
+              placeholder="Describe the changes you want..."
+              value={revisionNotes}
+              onChange={(e) => setRevisionNotes(e.target.value)}
+              rows={4}
+              disabled={requestRevision.isPending || iterative.anyPending}
+            />
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() =>
+                  requestRevision.mutate({ matterId, phaseName, feedback: revisionNotes })
+                }
+                disabled={!revisionNotes.trim() || requestRevision.isPending || iterative.anyPending}
+              >
+                {requestRevision.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Submit revision
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { setShowRevisionInput(false); setRevisionNotes(""); }}
+                disabled={requestRevision.isPending}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Primary actions */}
+        <div className="flex gap-2 flex-wrap pt-2">
+          <Button
+            onClick={handleRequestFeedback}
+            disabled={iterative.anyPending || !latestVersion}
+          >
+            {iterative.isRequestingFeedback && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            {BUTTON_LABELS.getFeedback}
+          </Button>
+
+          {!showRevisionInput && (
+            <Button
+              variant="outline"
+              onClick={() => setShowRevisionInput(true)}
+              disabled={iterative.anyPending}
+            >
+              {BUTTON_LABELS.reviseWithNotes}
+            </Button>
+          )}
+
+          {/* Restart with different model — confirm dialog */}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                disabled={iterative.anyPending}
+              >
+                {BUTTON_LABELS.startFreshWithDifferentModel}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{CONFIRM_LABELS.restartTitle}</AlertDialogTitle>
+                <AlertDialogDescription>{CONFIRM_LABELS.restartBody}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="py-2">
+                <ModelPicker
+                  context="restart"
+                  currentVersionModel={currentVersionModel as ProviderKey | undefined}
+                  value={restartModel}
+                  onChange={setRestartModel}
+                  label="New model"
+                />
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{CONFIRM_LABELS.restartCancel}</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    if (!restartModel) { toast.error("Please select a model."); return; }
+                    iterative.restartWithDifferentModel({ newGeneratorModelId: restartModel });
+                  }}
+                  disabled={!restartModel || iterative.isRestarting}
+                >
+                  {iterative.isRestarting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                  {CONFIRM_LABELS.restartConfirm}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Iterative feedback action (awaiting_feedback_action) ─────────────
+function IterativeFeedbackAction({
+  matterId,
+  phase,
+  config,
+  onRefresh,
+}: {
+  matterId: string;
+  phase: Phase;
+  config: PhaseConfig;
+  onRefresh: () => void;
+}) {
+  const phaseName = phase.phaseName;
+  const iterativeMeta = parseIterativeMeta(phase.iterativeMeta, { phaseId: phase.id });
+
+  const phaseQuery = trpc.phase.get.useQuery({ matterId, phaseName }, { refetchInterval: false });
+  const versions = phaseQuery.data?.versions ?? [];
+  const latestVersion = versions.reduce(
+    (best: any, v: any) => (!best || v.versionNumber > best.versionNumber ? v : best),
+    null as any
+  );
+  const rawFeedback = phaseQuery.data?.feedback ?? [];
+
+  const iterative = useIterativeReview({ matterId, phaseName }, onRefresh);
+
+  // Manual selection state
+  const [mode, setMode] = useState<"view" | "select">("view");
+  const [selections, setSelections] = useState<ManualSelectionInput[]>([]);
+
+  // Evaluator model picker state
+  const [evaluatorModel, setEvaluatorModel] = useState<ProviderKey | "">(
+    () => getDefaultModel("evaluator", (iterativeMeta.currentVersionModel ?? undefined) as ProviderKey | undefined)
+  );
+
+  const versionNumber = latestVersion?.versionNumber ?? 1;
+
+  // Map raw feedback rows to FeedbackItem shape
+  const feedbackItems: FeedbackItem[] = useMemo(() => {
+    // Group by reviewerProvider, concatenate points
+    const grouped: Record<string, { id: number; provider: string; points: string[] }> = {};
+    for (const row of rawFeedback as any[]) {
+      const key = row.reviewerProvider;
+      if (!grouped[key]) grouped[key] = { id: row.id, provider: key, points: [] };
+      grouped[key].points.push(row.point);
+    }
+    return Object.values(grouped).map((g) => ({
+      id: g.id,
+      reviewerProvider: g.provider,
+      content: g.points.join("\n\n"),
+    }));
+  }, [rawFeedback]);
+
+  // feedbackId → provider map for SelectedChangesTray
+  const feedbackProviders: Record<number, string> = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const row of rawFeedback as any[]) {
+      map[row.id] = row.reviewerProvider;
+    }
+    return map;
+  }, [rawFeedback]);
+
+  const handleGetAiEvaluation = useCallback(() => {
+    if (!evaluatorModel) { toast.error("Please select an evaluator model."); return; }
+    iterative.evaluateFeedback({ versionNumber, evaluatorModelId: evaluatorModel });
+  }, [iterative, versionNumber, evaluatorModel]);
+
+  const handlePickManually = useCallback(() => {
+    setMode("select");
+  }, []);
+
+  const handleSelectionAdded = useCallback((sel: ManualSelectionInput) => {
+    setSelections((prev) => [...prev, { ...sel, selectionOrder: prev.length }]);
+  }, []);
+
+  const handleSubmitManual = useCallback(() => {
+    if (selections.length === 0) { toast.error("No changes selected."); return; }
+    iterative.submitManualDecisions({ versionNumber, selections, regeneratorModelId: (iterativeMeta.currentVersionModel ?? "claude") as string });
+  }, [iterative, versionNumber, selections]);
+
+  if (phaseQuery.isLoading) {
+    return <IterativeLoadingCard label={config.label} message="Loading feedback..." />;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="font-serif text-xl">{config.label}</CardTitle>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="secondary">{STATE_LABELS.awaiting_feedback_action}</Badge>
+            <IterationCounter
+              cycleNumber={iterativeMeta.cycleNumber}
+              iterationNumber={iterativeMeta.iterationNumber}
+            />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Evaluator model picker (shown in view mode above action buttons) */}
+        {mode === "view" && (
+          <div className="max-w-xs">
+            <ModelPicker
+              context="evaluator"
+              currentVersionModel={(iterativeMeta.currentVersionModel ?? undefined) as ProviderKey | undefined}
+              value={evaluatorModel}
+              onChange={setEvaluatorModel}
+              label="Evaluator model"
+              disabled={iterative.anyPending}
+            />
+          </div>
+        )}
+
+        <FeedbackPanels
+          feedbackItems={feedbackItems}
+          mode={mode}
+          onGetAiEvaluation={handleGetAiEvaluation}
+          onPickManually={handlePickManually}
+          onSelectionAdded={handleSelectionAdded}
+          disabled={iterative.anyPending}
+        />
+
+        {/* Manual selection tray (select mode) */}
+        {mode === "select" && (
+          <div className="space-y-3">
+            <SelectedChangesTray
+              selections={selections}
+              feedbackProviders={feedbackProviders}
+              onChange={setSelections}
+              disabled={iterative.anyPending}
+            />
+            <div className="flex gap-2">
+              <Button
+                onClick={handleSubmitManual}
+                disabled={selections.length === 0 || iterative.anyPending}
+              >
+                {iterative.isSubmittingManualDecisions && (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                )}
+                {BUTTON_LABELS.regenerateWithSelections}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => { setMode("view"); setSelections([]); }}
+                disabled={iterative.anyPending}
+              >
+                Back
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* AI evaluation loading indicator */}
+        {iterative.isEvaluating && (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">{LOADING_LABELS.evaluatingFeedback}</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Iterative evaluation decisions (awaiting_evaluation_decisions) ───
+function IterativeEvaluationDecisions({
+  matterId,
+  phase,
+  config,
+  onRefresh,
+}: {
+  matterId: string;
+  phase: Phase;
+  config: PhaseConfig;
+  onRefresh: () => void;
+}) {
+  const phaseName = phase.phaseName;
+  const iterativeMeta = parseIterativeMeta(phase.iterativeMeta, { phaseId: phase.id });
+
+  const phaseQuery = trpc.phase.get.useQuery({ matterId, phaseName }, { refetchInterval: false });
+  const versions = phaseQuery.data?.versions ?? [];
+  const latestVersion = versions.reduce(
+    (best: any, v: any) => (!best || v.versionNumber > best.versionNumber ? v : best),
+    null as any
+  );
+  const versionNumber = latestVersion?.versionNumber ?? 1;
+
+  // Fetch evaluation for this version
+  const evalQuery = trpc.feedback.getEvaluation.useQuery(
+    { matterId, phaseName, versionNumber },
+    { enabled: !!latestVersion }
+  );
+
+  const iterative = useIterativeReview({ matterId, phaseName }, onRefresh);
+
+  // Draft container ref for anchor scroll
+  const draftContainerRef = useRef<HTMLDivElement>(null);
+
+  const rehypePlugins = useMemo(
+    () => [...Object.values(defaultRehypePlugins), rehypeParagraphIds] as any,
+    []
+  );
+
+  const evaluation = evalQuery.data;
+  const pointByPoint: PointByPointItem[] = evaluation
+    ? parsePointByPoint(evaluation.pointByPoint, { evaluationId: evaluation.id })
+    : [];
+
+    const handleSubmit = useCallback(
+    (decisions: PointByPointItem[], regeneratorModel: string) => {
+      iterative.submitEvaluationDecisions({
+        versionNumber,
+        evaluationId: evaluation!.id,
+        decisions: pointByPointItemsToDecisions(decisions),
+        regeneratorModelId: regeneratorModel,
+      });
+    },
+    [iterative, evaluation, versionNumber]
+  );
+
+  if (phaseQuery.isLoading || evalQuery.isLoading) {
+    return <IterativeLoadingCard label={config.label} message="Loading evaluation..." />;
+  }
+
+  if (!evaluation) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-serif text-xl">{config.label}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground">No evaluation found for this version.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="font-serif text-xl">{config.label}</CardTitle>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="secondary">{STATE_LABELS.awaiting_evaluation_decisions}</Badge>
+            <IterationCounter
+              cycleNumber={iterativeMeta.cycleNumber}
+              iterationNumber={iterativeMeta.iterationNumber}
+            />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Draft preview (collapsible reference) */}
+        {latestVersion && (
+          <details className="group">
+            <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground select-none">
+              View draft (v{latestVersion.versionNumber})
+            </summary>
+            <ScrollArea className="h-[300px] rounded-lg border p-4 mt-2">
+              <div ref={draftContainerRef} className="prose prose-sm max-w-none">
+                <Streamdown rehypePlugins={rehypePlugins}>
+                  {latestVersion.content}
+                </Streamdown>
+              </div>
+            </ScrollArea>
+          </details>
+        )}
+
+        <EvaluationPanel
+          narrativeReasoning={evaluation.narrativeReasoning}
+          items={pointByPoint}
+          currentVersionModel={
+            (iterativeMeta.currentVersionModel ?? evaluation.evaluatorProvider) as string
+          }
+          draftContainerRef={draftContainerRef as React.RefObject<Element | null>}
+          onSubmit={handleSubmit}
+          disabled={iterative.anyPending}
+        />
+
+        {iterative.isSubmittingEvaluationDecisions && (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">{LOADING_LABELS.regenerating}</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Iterative format review (awaiting_format_review in iterative_review mode) ──
+function IterativeFormatReviewWrapper({
+  matterId,
+  phase,
+  config,
+  onRefresh,
+}: {
+  matterId: string;
+  phase: Phase;
+  config: PhaseConfig;
+  onRefresh: () => void;
+}) {
+  const phaseName = phase.phaseName;
+  const iterativeMeta = parseIterativeMeta(phase.iterativeMeta, { phaseId: phase.id });
+
+  const phaseQuery = trpc.phase.get.useQuery({ matterId, phaseName }, { refetchInterval: false });
+  const versions = phaseQuery.data?.versions ?? [];
+
+  // Find the formatted version (latest formatting pass) and the substantive version
+  const formattedVersion = versions.find((v: any) => v.isFormattingPass === 1 && v.versionNumber === Math.max(...versions.filter((x: any) => x.isFormattingPass === 1).map((x: any) => x.versionNumber)));
+  const substantiveVersion = phase.acceptedSubstantiveVersion
+    ? versions.find((v: any) => v.versionNumber === phase.acceptedSubstantiveVersion)
+    : null;
+
+  const iterative = useIterativeReview({ matterId, phaseName }, onRefresh);
+
+  if (phaseQuery.isLoading) {
+    return <IterativeLoadingCard label={config.label} message="Loading formatted draft..." />;
+  }
+
+  if (!formattedVersion) {
+    return <IterativeLoadingCard label={config.label} message="Formatting in progress..." />;
+  }
+
+  // Flags from version metadata
+  const versionMeta = parseVersionMetadata(formattedVersion.metadata, { versionId: formattedVersion.id });
+  const flags = versionMeta.flags ? Object.keys(versionMeta.flags) : undefined;
+
+  return (
+    <IterativeFormattingReview
+      formattedContent={formattedVersion.content}
+      formattedVersionNumber={formattedVersion.versionNumber}
+      substantiveContent={substantiveVersion?.content}
+      substantiveVersionNumber={substantiveVersion?.versionNumber}
+      formatRejectionCount={iterativeMeta.formatRejectionCount}
+      flags={flags}
+      onApproveFormatting={() =>
+        iterative.acceptIterativeVersion({ versionNumber: formattedVersion.versionNumber })
+      }
+      onRejectFormatting={(kind) => iterative.rejectFormatting({ kind })}
+      onAcceptWithoutFormatting={() => iterative.acceptSubstantiveUnformatted()}
+      disabled={iterative.anyPending}
+    />
+  );
+}
+
 export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: PhaseContentProps) {
   const phaseName = phase.phaseName as PhaseName;
   const ws = phase.workflowState as WorkflowState;
   const config = PHASE_CONFIG[phaseName];
   const isOptional = OPTIONAL_PHASES.includes(phaseName);
+  const isIterativeMode = phase.activeWorkflowMode === "iterative_review";
+
   const [context, setContext] = useState("");
   const [modeOverride, setModeOverride] = useState<string>("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -266,108 +918,128 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
             );
             if (currentOrder === 0 || (completedPriors.length === 0 && incompletePriors.length === 0)) return null;
             return (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-2">
-                <div className="flex items-center gap-2 text-blue-800 font-medium text-sm">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Prior Phase Context
-                </div>
-                {completedPriors.length > 0 ? (
-                  <p className="text-sm text-blue-700">
-                    The following completed phase outputs will be automatically included as context:
-                    {" "}<span className="font-medium">{completedPriors.map(p => PHASE_CONFIG[p.phaseName as PhaseName]?.label ?? p.phaseName).join(", ")}</span>.
-                    No additional input is required to proceed.
-                  </p>
-                ) : (
-                  <p className="text-sm text-blue-700">
-                    No prior phases are complete yet. You may upload source documents below or proceed directly.
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                {completedPriors.length > 0 && (
+                  <p>
+                    <span className="font-medium">Prior context available:</span>{" "}
+                    {completedPriors.map(p => p.phaseLabel ?? p.phaseName).join(", ")} will be used as source material.
                   </p>
                 )}
                 {incompletePriors.length > 0 && (
-                  <p className="text-xs text-blue-600">
-                    Not yet complete (will not be included): {incompletePriors.map(p => PHASE_CONFIG[p.phaseName as PhaseName]?.label ?? p.phaseName).join(", ")}.
+                  <p className="mt-1 text-amber-700">
+                    <AlertTriangle className="h-3 w-3 inline mr-1" />
+                    Incomplete prior phases: {incompletePriors.map(p => p.phaseLabel ?? p.phaseName).join(", ")}.
                   </p>
                 )}
               </div>
             );
           })()}
 
-          {/* Source Materials — FileDropZone for ALL phases */}
+          {/* File upload */}
           <div className="space-y-2">
-            <Label>Source Materials</Label>
+            <Label>Source documents (optional)</Label>
             <FileDropZone
               onFilesChange={handleFilesChange}
-              existingFiles={existingUploads.map(u => ({
-                id: u.id,
-                fileName: u.fileName,
-                fileUrl: u.fileUrl,
-                fileSize: u.fileSize ?? undefined,
-              }))}
+              existingFiles={uploadsQuery.data as any ?? []}
             />
           </div>
 
+          {/* Context / instructions */}
           <div className="space-y-2">
-            <Label>Additional Context / Attorney Notes <span className="text-muted-foreground font-normal text-xs">(optional)</span></Label>
+            <Label htmlFor="context">Additional context (optional)</Label>
             <Textarea
-              placeholder="Enter any additional context, attorney notes, or specific instructions for this phase. This text will be included in the AI prompt alongside any uploaded documents."
+              id="context"
+              placeholder="Any specific instructions or context for this phase..."
               value={context}
               onChange={(e) => setContext(e.target.value)}
-              rows={4}
-              className="resize-y"
+              rows={3}
             />
           </div>
 
-          {/* Mode selector for escalatable document generation phases */}
-          {config.escalatable && config.availableModes.length > 1 && (
-            <div className="space-y-2">
-              <Label>Workflow Mode</Label>
-              <Select
-                value={modeOverride || config.defaultMode}
-                onValueChange={setModeOverride}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {config.availableModes.map((mode) => (
-                    <SelectItem key={mode} value={mode}>
-                      <div>
-                        <span className="font-medium">{WORKFLOW_MODE_LABELS[mode]}</span>
-                        <span className="text-xs text-muted-foreground ml-2">
-                          {WORKFLOW_MODE_DESCRIPTIONS[mode]}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            {isUploadingAndStarting ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Uploading files and starting phase...
-              </div>
-            ) : (
-              <>
-                <Button
-                  onClick={handleStartPhase}
-                  disabled={isUploadingAndStarting || startPhase.isPending}
+          {/* Mode override — full_competitive is under Advanced disclosure only (§3.1) */}
+          {config.availableModes && config.availableModes.length > 1 && (() => {
+            const primaryModes = config.availableModes.filter((m: WorkflowMode) => m !== "full_competitive");
+            const hasAdvanced = config.availableModes.includes("full_competitive" as WorkflowMode);
+            const effectiveMode = modeOverride || config.defaultMode;
+            return (
+              <div className="space-y-2">
+                <Label htmlFor="mode-override">Workflow mode</Label>
+                <Select
+                  value={effectiveMode}
+                  onValueChange={setModeOverride}
                 >
-                  <Play className="h-4 w-4 mr-2" />
-                  Start Phase
-                </Button>
-                {isOptional && (
-                  <Button
-                    variant="outline"
-                    onClick={() => skipPhase.mutate({ matterId, phaseName: phase.phaseName })}
-                    disabled={skipPhase.isPending}
-                  >
-                    <SkipForward className="h-4 w-4 mr-2" /> Skip
-                  </Button>
+                  <SelectTrigger id="mode-override">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {primaryModes.map((mode: WorkflowMode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {WORKFLOW_MODE_LABELS[mode]}
+                        {mode === config.defaultMode ? " (default)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {effectiveMode && (
+                  <p className="text-xs text-muted-foreground">
+                    {WORKFLOW_MODE_DESCRIPTIONS[effectiveMode as WorkflowMode]}
+                  </p>
                 )}
-              </>
+                {hasAdvanced && (
+                  <Collapsible>
+                    <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                      <ChevronDown className="h-3 w-3 transition-transform [[data-state=open]_&]:rotate-180" />
+                      Advanced
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-2 space-y-2">
+                      <div className="rounded border border-dashed border-muted-foreground/30 p-3 space-y-2">
+                        <p className="text-xs text-muted-foreground font-medium">Legacy mode</p>
+                        <Select
+                          value={effectiveMode === "full_competitive" ? "full_competitive" : ""}
+                          onValueChange={(v) => v && setModeOverride(v as WorkflowMode)}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Select legacy mode..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="full_competitive">
+                              {WORKFLOW_MODE_LABELS["full_competitive"]}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          {WORKFLOW_MODE_DESCRIPTIONS["full_competitive"]}
+                        </p>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Actions */}
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              onClick={handleStartPhase}
+              disabled={isUploadingAndStarting || startPhase.isPending}
+            >
+              {(isUploadingAndStarting || startPhase.isPending) ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Play className="h-4 w-4 mr-2" />
+              )}
+              Start Phase
+            </Button>
+            {isOptional && (
+              <Button
+                variant="outline"
+                onClick={() => skipPhase.mutate({ matterId, phaseName: phase.phaseName })}
+                disabled={skipPhase.isPending}
+              >
+                {skipPhase.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <SkipForward className="h-4 w-4 mr-2" />}
+                Skip Phase
+              </Button>
             )}
           </div>
         </CardContent>
@@ -421,6 +1093,30 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
     );
   }
 
+  // ── Iterative: awaiting_reviews (loading spinner) ──
+  if (ws === "awaiting_reviews") {
+    return (
+      <IterativeLoadingCard
+        label={config.label}
+        message={LOADING_LABELS.reviewing}
+      />
+    );
+  }
+
+  // ── Iterative: evaluating_feedback (loading spinner) ──
+  if (ws === "evaluating_feedback") {
+    return (
+      <IterativeLoadingCard
+        label={config.label}
+        message={LOADING_LABELS.evaluatingFeedback}
+      />
+    );
+  }
+
+  // ── Iterative: regenerating (loading spinner) ──
+  // Note: the existing "regenerating" state is handled above in the combined block.
+  // The iterative workflow uses the same "regenerating" state key.
+
   // ── Awaiting Selection (competitive_select / full_competitive) ──
   if (ws === "awaiting_selection") {
     return (
@@ -433,13 +1129,63 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
     );
   }
 
-  // ── Awaiting Attorney Review (single_model_draft) ──
+  // ── Awaiting Attorney Review ──
+  // Option A: mode-guard — iterative_review gets the new UI; single_model_draft keeps AttorneyDraftReview
   if (ws === "awaiting_attorney_review") {
+    if (isIterativeMode) {
+      return (
+        <IterativeDraftReview
+          matterId={matterId}
+          phase={phase}
+          config={config}
+          onRefresh={onRefresh}
+        />
+      );
+    }
     return (
       <AttorneyDraftReview
         matterId={matterId}
         phaseName={phase.phaseName}
         phaseLabel={config.label}
+        onRefresh={onRefresh}
+      />
+    );
+  }
+
+  // ── Awaiting Feedback Action (iterative_review only) ──
+  if (ws === "awaiting_feedback_action") {
+    return (
+      <IterativeFeedbackAction
+        matterId={matterId}
+        phase={phase}
+        config={config}
+        onRefresh={onRefresh}
+      />
+    );
+  }
+
+  // ── Awaiting Manual Decisions (iterative_review only) ──
+  // Note: this state is entered after "Pick manually" — FeedbackPanels in select mode
+  // is rendered within IterativeFeedbackAction above. If the page refreshes while in
+  // awaiting_manual_decisions, we show the same component (it will re-enter select mode).
+  if (ws === "awaiting_manual_decisions") {
+    return (
+      <IterativeFeedbackAction
+        matterId={matterId}
+        phase={phase}
+        config={config}
+        onRefresh={onRefresh}
+      />
+    );
+  }
+
+  // ── Awaiting Evaluation Decisions (iterative_review only) ──
+  if (ws === "awaiting_evaluation_decisions") {
+    return (
+      <IterativeEvaluationDecisions
+        matterId={matterId}
+        phase={phase}
+        config={config}
         onRefresh={onRefresh}
       />
     );
@@ -481,7 +1227,18 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
   }
 
   // ── Awaiting Format Review ──
+  // Option A: mode-guard — iterative_review gets the new iterative FormattingReview
   if (ws === "awaiting_format_review") {
+    if (isIterativeMode) {
+      return (
+        <IterativeFormatReviewWrapper
+          matterId={matterId}
+          phase={phase}
+          config={config}
+          onRefresh={onRefresh}
+        />
+      );
+    }
     return (
       <FormattingReview
         matterId={matterId}
