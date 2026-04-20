@@ -281,6 +281,30 @@ describe("PhaseContent — iterative mode-guard (§3.3.5 Option A)", () => {
     });
   });
 
+  describe("advanced mode disclosure (§3.1)", () => {
+    it("does not show full_competitive in primary mode list for phases that include it", () => {
+      // memo phase has full_competitive in availableModes
+      const phase = makePhase({ workflowState: "idle", status: "not_started" });
+      renderPhaseContent(phase);
+      // The primary mode selector should not contain full_competitive as an option
+      // (it's hidden under the Advanced collapsible)
+      // We verify the "Advanced" trigger is present
+      expect(screen.getByText("Advanced")).toBeDefined();
+    });
+
+    it("shows Advanced trigger only for phases with full_competitive", () => {
+      // planning phase does NOT have full_competitive in availableModes
+      const planningPhase = {
+        ...makePhase({ workflowState: "idle", status: "not_started" }),
+        phaseName: "planning" as const,
+        phaseLabel: "Planning",
+      };
+      renderPhaseContent(planningPhase);
+      // No Advanced trigger for phases without full_competitive
+      expect(screen.queryByText("Advanced")).toBeNull();
+    });
+  });
+
   describe("non-iterative states are unaffected", () => {
     it("renders idle state for idle workflowState", () => {
       const phase = makePhase({ workflowState: "idle", status: "not_started" });

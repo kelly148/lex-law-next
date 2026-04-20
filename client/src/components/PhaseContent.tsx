@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,7 +24,7 @@ import {
   type PhaseName, type WorkflowState, type WorkflowMode, type ProviderKey, type PhaseConfig,
 } from "@shared/workflow";
 import {
-  Play, SkipForward, Loader2, AlertTriangle, CheckCircle2, Clock, Download,
+  Play, SkipForward, Loader2, AlertTriangle, CheckCircle2, Clock, Download, ChevronDown,
 } from "lucide-react";
 import { useState, useRef, useCallback, useMemo } from "react";
 import { toast } from "sonner";
@@ -955,33 +956,67 @@ export default function PhaseContent({ matterId, phase, allPhases, onRefresh }: 
             />
           </div>
 
-          {/* Mode override */}
-          {config.availableModes && config.availableModes.length > 1 && (
-            <div className="space-y-2">
-              <Label htmlFor="mode-override">Workflow mode</Label>
-              <Select
-                value={modeOverride || config.defaultMode}
-                onValueChange={setModeOverride}
-              >
-                <SelectTrigger id="mode-override">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {config.availableModes.map((mode: WorkflowMode) => (
-                    <SelectItem key={mode} value={mode}>
-                      {WORKFLOW_MODE_LABELS[mode]}
-                      {mode === config.defaultMode ? " (default)" : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {(modeOverride || config.defaultMode) && (
-                <p className="text-xs text-muted-foreground">
-                  {WORKFLOW_MODE_DESCRIPTIONS[modeOverride as WorkflowMode || config.defaultMode]}
-                </p>
-              )}
-            </div>
-          )}
+          {/* Mode override — full_competitive is under Advanced disclosure only (§3.1) */}
+          {config.availableModes && config.availableModes.length > 1 && (() => {
+            const primaryModes = config.availableModes.filter((m: WorkflowMode) => m !== "full_competitive");
+            const hasAdvanced = config.availableModes.includes("full_competitive" as WorkflowMode);
+            const effectiveMode = modeOverride || config.defaultMode;
+            return (
+              <div className="space-y-2">
+                <Label htmlFor="mode-override">Workflow mode</Label>
+                <Select
+                  value={effectiveMode}
+                  onValueChange={setModeOverride}
+                >
+                  <SelectTrigger id="mode-override">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {primaryModes.map((mode: WorkflowMode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {WORKFLOW_MODE_LABELS[mode]}
+                        {mode === config.defaultMode ? " (default)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {effectiveMode && (
+                  <p className="text-xs text-muted-foreground">
+                    {WORKFLOW_MODE_DESCRIPTIONS[effectiveMode as WorkflowMode]}
+                  </p>
+                )}
+                {hasAdvanced && (
+                  <Collapsible>
+                    <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                      <ChevronDown className="h-3 w-3 transition-transform [[data-state=open]_&]:rotate-180" />
+                      Advanced
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-2 space-y-2">
+                      <div className="rounded border border-dashed border-muted-foreground/30 p-3 space-y-2">
+                        <p className="text-xs text-muted-foreground font-medium">Legacy mode</p>
+                        <Select
+                          value={effectiveMode === "full_competitive" ? "full_competitive" : ""}
+                          onValueChange={(v) => v && setModeOverride(v as WorkflowMode)}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Select legacy mode..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="full_competitive">
+                              {WORKFLOW_MODE_LABELS["full_competitive"]}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          {WORKFLOW_MODE_DESCRIPTIONS["full_competitive"]}
+                        </p>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Actions */}
           <div className="flex gap-2 flex-wrap">
