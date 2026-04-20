@@ -125,12 +125,18 @@ describe("shared workflow constants", () => {
     expect(WORKFLOW_STATES).toContain("formatting");
     expect(WORKFLOW_STATES).toContain("awaiting_format_review");
     expect(WORKFLOW_STATES).toContain("complete");
-    expect(WORKFLOW_STATES).toHaveLength(15);
+    // Phase 1 additions: 5 new states
+    expect(WORKFLOW_STATES).toContain("awaiting_reviews");
+    expect(WORKFLOW_STATES).toContain("awaiting_feedback_action");
+    expect(WORKFLOW_STATES).toContain("evaluating_feedback");
+    expect(WORKFLOW_STATES).toContain("awaiting_evaluation_decisions");
+    expect(WORKFLOW_STATES).toContain("awaiting_manual_decisions");
+    expect(WORKFLOW_STATES).toHaveLength(20);
   });
 
-  it("defines 4 workflow modes", () => {
+  it("defines 5 workflow modes (Phase 1: added iterative_review)", () => {
     expect(WORKFLOW_MODES).toEqual([
-      "single_model", "competitive_select", "single_model_draft", "full_competitive",
+      "single_model", "competitive_select", "single_model_draft", "full_competitive", "iterative_review",
     ]);
   });
 
@@ -163,25 +169,26 @@ describe("phase configuration", () => {
     expect(PHASE_CONFIG.intake.hasFormattingPass).toBe(false);
   });
 
-  it("planning defaults to competitive_select, analysis stage", () => {
-    expect(PHASE_CONFIG.planning.defaultMode).toBe("competitive_select");
+  it("planning defaults to single_model_draft (Phase 1 update), analysis stage, escalatable", () => {
+    expect(PHASE_CONFIG.planning.defaultMode).toBe("single_model_draft");
     expect(PHASE_CONFIG.planning.stage).toBe("analysis");
-    expect(PHASE_CONFIG.planning.escalatable).toBe(false);
+    expect(PHASE_CONFIG.planning.escalatable).toBe(true);
   });
 
-  it("engagement defaults to single_model_draft, escalatable, document_generation stage", () => {
-    expect(PHASE_CONFIG.engagement.defaultMode).toBe("single_model_draft");
+  it("engagement defaults to iterative_review (Phase 1 update), escalatable, document_generation stage", () => {
+    expect(PHASE_CONFIG.engagement.defaultMode).toBe("iterative_review");
     expect(PHASE_CONFIG.engagement.stage).toBe("document_generation");
     expect(PHASE_CONFIG.engagement.escalatable).toBe(true);
     expect(PHASE_CONFIG.engagement.availableModes).toContain("full_competitive");
+    expect(PHASE_CONFIG.engagement.availableModes).toContain("iterative_review");
   });
 
-  it("agreement defaults to full_competitive, not escalatable, has formatting pass", () => {
-    expect(PHASE_CONFIG.agreement.defaultMode).toBe("full_competitive");
+  it("agreement defaults to iterative_review (Phase 1 update), escalatable, has formatting pass", () => {
+    expect(PHASE_CONFIG.agreement.defaultMode).toBe("iterative_review");
     expect(PHASE_CONFIG.agreement.stage).toBe("document_generation");
-    expect(PHASE_CONFIG.agreement.escalatable).toBe(false);
+    expect(PHASE_CONFIG.agreement.escalatable).toBe(true);
     expect(PHASE_CONFIG.agreement.hasFormattingPass).toBe(true);
-    expect(PHASE_CONFIG.agreement.availableModes).toEqual(["full_competitive"]);
+    expect(PHASE_CONFIG.agreement.availableModes).toContain("iterative_review");
   });
 });
 
@@ -310,7 +317,7 @@ describe("config router", () => {
     expect(workflow.phases[6]).toMatchObject({
       name: "agreement",
       label: "Final Legal Document",
-      defaultMode: "full_competitive",
+      defaultMode: "iterative_review",
       hasFormattingPass: true,
     });
   });
@@ -536,7 +543,31 @@ describe("matter and phase routers", () => {
 
   // ── Competitive Select Mode (planning path) ──────────────────────
 
-  it("test_competitive_select_mode: planning startPhase → drafting → awaiting_selection", async () => {
+  it("test_single_model_draft_mode: planning startPhase → model_selection (Phase 1 default change)", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+
+    // Mock all phases with intake completed
+    vi.mocked(db.getPhasesByMatterId).mockResolvedValueOnce(
+      mockAllPhases("test-matter-123", {
+        intake: { status: "completed" },
+        issues: { status: "completed" },
+      }) as any
+    );
+
+    const result = await caller.phase.startPhase({
+      matterId: "test-matter-123",
+      phaseName: "planning",
+    });
+
+    // Phase 1: planning defaults to single_model_draft → routes to model_selection
+    expect(result.success).toBe(true);
+    expect(result.workflowState).toBe("model_selection");
+    expect(result.mode).toBe("single_model_draft");
+  });
+
+  it("test_competitive_select_mode: planning with override → drafting → awaiting_selection", async () => {
     const { ctx } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const db = await import("./db");
@@ -552,6 +583,7 @@ describe("matter and phase routers", () => {
     const result = await caller.phase.startPhase({
       matterId: "test-matter-123",
       phaseName: "planning",
+      workflowModeOverride: "competitive_select",
     });
 
     expect(result.success).toBe(true);
@@ -594,7 +626,7 @@ describe("matter and phase routers", () => {
 
   // ── Single Model Draft Mode (engagement path) ────────────────────
 
-  it("test_single_model_draft_mode: engagement startPhase → model_selection", async () => {
+  it("test_iterative_review_fallback: engagement startPhase → startCompetitiveDraft (Phase 1 temporary)", async () => {
     const { ctx } = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const db = await import("./db");
@@ -610,6 +642,31 @@ describe("matter and phase routers", () => {
     const result = await caller.phase.startPhase({
       matterId: "test-matter-123",
       phaseName: "engagement",
+    });
+
+    // Phase 1: engagement defaults to iterative_review which falls through to startCompetitiveDraft
+    expect(result.success).toBe(true);
+    expect(result.versionNumber).toBe(1);
+    expect(result.drafts).toBe(3);
+  });
+
+  it("test_single_model_draft_mode: engagement with override → model_selection", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const db = await import("./db");
+
+    vi.mocked(db.getPhasesByMatterId).mockResolvedValueOnce(
+      mockAllPhases("test-matter-123", {
+        intake: { status: "completed" },
+        issues: { status: "completed" },
+        planning: { status: "completed" },
+      }) as any
+    );
+
+    const result = await caller.phase.startPhase({
+      matterId: "test-matter-123",
+      phaseName: "engagement",
+      workflowModeOverride: "single_model_draft",
     });
 
     expect(result.success).toBe(true);

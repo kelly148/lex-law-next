@@ -1,4 +1,4 @@
-import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { index, int, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 // ── Users (Manus OAuth) ──────────────────────────────────────────────
 export const users = mysqlTable("users", {
@@ -65,6 +65,9 @@ export const phases = mysqlTable("phases", {
     "awaiting_attorney_review", "revising", "reviewing", "evaluating",
     "awaiting_decisions", "regenerating", "accepted", "formatting",
     "awaiting_format_review", "complete",
+    // Phase 1: iterative_review states
+    "awaiting_reviews", "awaiting_feedback_action", "evaluating_feedback",
+    "awaiting_evaluation_decisions", "awaiting_manual_decisions",
   ]).default("idle").notNull(),
   // Workflow mode for this phase instance
   activeWorkflowMode: varchar("activeWorkflowMode", { length: 64 }),
@@ -74,6 +77,10 @@ export const phases = mysqlTable("phases", {
   acceptedSubstantiveVersion: int("acceptedSubstantiveVersion"),
   // Final version number after all processing complete
   officialFinalVersion: int("officialFinalVersion"),
+  // Phase 1: iterative_review columns
+  initialGeneratorModel: varchar("initialGeneratorModel", { length: 50 }),
+  iterativeMeta: json("iterativeMeta"),
+  promptMode: varchar("promptMode", { length: 20 }).default("base"),
   isOptional: int("isOptional").default(0).notNull(),
   isStale: int("isStale").default(0).notNull(),
   workflowData: json("workflowData"),
@@ -148,3 +155,43 @@ export const uploads = mysqlTable("uploads", {
 
 export type Upload = typeof uploads.$inferSelect;
 export type InsertUpload = typeof uploads.$inferInsert;
+
+// ── Feedback Evaluations (iterative_review evaluator output) ────────
+export const feedbackEvaluations = mysqlTable("feedback_evaluations", {
+  id: int("id").autoincrement().primaryKey(),
+  matterId: varchar("matterId", { length: 36 }).notNull(),
+  phaseName: varchar("phaseName", { length: 50 }).notNull(),
+  versionNumber: int("versionNumber").notNull(),
+  evaluatorProvider: varchar("evaluatorProvider", { length: 50 }).notNull(),
+  narrativeReasoning: text("narrativeReasoning").notNull(),
+  pointByPoint: json("pointByPoint").notNull(),
+  createdAt: timestamp("createdAt").defaultNow(),
+}, (table) => ({
+  lookupIdx: index("idx_feedback_evaluations_lookup").on(
+    table.matterId, table.phaseName, table.versionNumber
+  ),
+}));
+
+export type FeedbackEvaluation = typeof feedbackEvaluations.$inferSelect;
+export type InsertFeedbackEvaluation = typeof feedbackEvaluations.$inferInsert;
+
+// ── Feedback Manual Selections (attorney manual text selections) ────
+export const feedbackManualSelections = mysqlTable("feedback_manual_selections", {
+  id: int("id").autoincrement().primaryKey(),
+  feedbackId: int("feedbackId").notNull().references(() => feedback.id, { onDelete: "cascade" }),
+  versionNumber: int("versionNumber").notNull(),
+  selectionOrder: int("selectionOrder").notNull(),
+  selectionKind: mysqlEnum("selectionKind", ["paragraph", "span"]).notNull(),
+  sourceText: text("sourceText").notNull(),
+  precedingContext: text("precedingContext"),
+  followingContext: text("followingContext"),
+  editedText: text("editedText"),
+  decision: mysqlEnum("decision", ["accepted", "modified"]).notNull(),
+  createdAt: timestamp("createdAt").defaultNow(),
+}, (table) => ({
+  feedbackIdx: index("idx_fms_feedback").on(table.feedbackId, table.selectionOrder),
+  versionIdx: index("idx_fms_version").on(table.versionNumber),
+}));
+
+export type FeedbackManualSelection = typeof feedbackManualSelections.$inferSelect;
+export type InsertFeedbackManualSelection = typeof feedbackManualSelections.$inferInsert;

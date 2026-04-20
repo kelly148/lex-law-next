@@ -64,6 +64,13 @@
       "when": 1776627679511,
       "tag": "0008_late_shocker",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1776692838051,
+      "tag": "0009_magenta_frank_castle",
+      "breakpoints": true
     }
   ]
 }
