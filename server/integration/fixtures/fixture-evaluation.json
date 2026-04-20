@@ -1,0 +1,65 @@
+{
+  "narrativeReasoning": "Both reviewers identified substantive issues with the engagement letter. The Claude reviewer focused on indemnification, fee structure clarity, and termination notice requirements. The OpenAI reviewer flagged digital confidentiality gaps, missing dispute resolution specifics, and retainer refundability. All six points are legitimate and should be addressed.",
+  "pointByPoint": [
+    {
+      "sourceFeedbackId": 1,
+      "sourceReviewerProvider": "claude",
+      "sourceExcerpt": "The indemnification clause in Section 4 should be strengthened to explicitly cover third-party claims arising from the client's own negligence.",
+      "sectionAnchor": {
+        "kind": "section_reference",
+        "value": "Section 4",
+        "locatorText": "Section 4 - Liability and Indemnification"
+      },
+      "recommendation": "adopt",
+      "reasoning": "The current language is ambiguous and creates firm exposure. This is a standard protective measure.",
+      "suggestedText": "The Client shall indemnify and hold harmless the Firm from any third-party claims arising out of or related to the Client's own negligence or misconduct.",
+      "attorneyDecision": null,
+      "attorneyModifiedText": null
+    },
+    {
+      "sourceFeedbackId": 1,
+      "sourceReviewerProvider": "claude",
+      "sourceExcerpt": "The fee structure in Section 2 needs clarification regarding the distinction between hourly rates and flat-fee arrangements.",
+      "sectionAnchor": {
+        "kind": "section_reference",
+        "value": "Section 2",
+        "locatorText": "Section 2 - Fees and Billing"
+      },
+      "recommendation": "adopt",
+      "reasoning": "Client confusion on billing method is a common source of disputes. Explicit language prevents this.",
+      "suggestedText": "Fees shall be billed at the hourly rate of $350 per hour unless a flat-fee arrangement is separately agreed upon in writing.",
+      "attorneyDecision": null,
+      "attorneyModifiedText": null
+    },
+    {
+      "sourceFeedbackId": 2,
+      "sourceReviewerProvider": "openai",
+      "sourceExcerpt": "The confidentiality provisions do not address digital communications including email and cloud storage.",
+      "sectionAnchor": {
+        "kind": "section_reference",
+        "value": "Section 5",
+        "locatorText": "Section 5 - Confidentiality"
+      },
+      "recommendation": "adopt",
+      "reasoning": "Digital communications are the primary vector for confidential information. This gap must be closed.",
+      "suggestedText": "All communications between Client and the Firm, whether in person, by telephone, by email, by text message, or through any cloud-based or digital platform, are protected by the attorney-client privilege.",
+      "attorneyDecision": null,
+      "attorneyModifiedText": null
+    },
+    {
+      "sourceFeedbackId": 2,
+      "sourceReviewerProvider": "openai",
+      "sourceExcerpt": "The retainer refundability is not explicitly addressed in Section 2.",
+      "sectionAnchor": {
+        "kind": "section_reference",
+        "value": "Section 2",
+        "locatorText": "Section 2 - Fees and Billing"
+      },
+      "recommendation": "skip",
+      "reasoning": "The firm's standard practice is non-refundable retainers, which is already implied by the existing language.",
+      "suggestedText": null,
+      "attorneyDecision": null,
+      "attorneyModifiedText": null
+    }
+  ]
+}

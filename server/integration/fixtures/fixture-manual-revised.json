@@ -1,0 +1,14 @@
+{
+  "revisedDocument": "ENGAGEMENT LETTER\n\nDear Client,\n\nWe are pleased to confirm our engagement to represent you in connection with [Matter Description].\n\n1. SCOPE OF REPRESENTATION\nOur representation is limited to the matter described above.\n\n2. FEES AND BILLING\nOur fees will be billed at our standard hourly rates, currently ranging from $350 to $650 per hour depending on the attorney assigned. Flat-fee arrangements, where offered, will be set forth in a separate written addendum. A retainer of $5,000 is due upon execution of this letter. This retainer is non-refundable.\n\n3. CONFIDENTIALITY\nAll communications between you and the firm, whether in person, by telephone, by email, by text message, or through any cloud-based or digital platform, are protected by the attorney-client privilege.\n\n4. TERMINATION\nEither party may terminate this engagement upon thirty (30) days' written notice.\n\nSincerely,\n[Attorney Name]\n",
+  "appliedChanges": [
+    {
+      "changeId": "manual-001",
+      "description": "Incorporated attorney-selected fee structure clarification"
+    },
+    {
+      "changeId": "manual-002",
+      "description": "Added digital communications to confidentiality clause"
+    }
+  ],
+  "unresolvedAnchors": []
+}
