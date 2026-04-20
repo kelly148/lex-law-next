@@ -9,6 +9,7 @@ import {
   InsertFactChange, factChanges,
   InsertUpload, uploads,
   InsertMatterFolder, matterFolders,
+  feedbackEvaluations,
 } from "../drizzle/schema";
 import { PHASE_NAMES, PHASE_ORDER, PHASE_CONFIG } from "../shared/workflow";
 import { ENV } from './_core/env';
@@ -316,6 +317,21 @@ export async function updateFeedbackDecision(feedbackId: number, decision: strin
   const updateObj: Record<string, any> = { decision: decision as any };
   if (attorneyNote !== undefined) updateObj.attorneyNote = attorneyNote;
   await db.update(feedback).set(updateObj).where(eq(feedback.id, feedbackId));
+}
+
+// ── Feedback Evaluation Helpers ──────────────────────────────────────
+export async function getEvaluationByVersion(matterId: string, phaseName: string, versionNumber: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db.select().from(feedbackEvaluations)
+    .where(and(
+      eq(feedbackEvaluations.matterId, matterId),
+      eq(feedbackEvaluations.phaseName, phaseName),
+      eq(feedbackEvaluations.versionNumber, versionNumber),
+    ))
+    .orderBy(desc(feedbackEvaluations.id))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 // ── Fact Change Helpers ──────────────────────────────────────────────

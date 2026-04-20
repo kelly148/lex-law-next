@@ -14,7 +14,7 @@ import {
   createPhases, getPhasesByMatterId, getPhase, updatePhaseWorkflowState,
   updatePhaseFields, setPhaseStatus, skipPhase,
   createVersion, getVersionsByPhase, getVersionByNumber, selectVersion, getLatestVersionNumber,
-  createFeedbackBatch, getFeedbackByPhase, updateFeedbackDecision,
+  createFeedbackBatch, getFeedbackByPhase, updateFeedbackDecision, getEvaluationByVersion,
   createFactChange, getFactChangesByMatter,
   createUpload, getUploadsByPhase,
   collectPriorPhaseOutputs,
@@ -994,6 +994,16 @@ async function triggerFormattingPass(
 // ── Other Routers ───────────────────────────────────────────────────
 
 const feedbackRouter = router({
+  getEvaluation: protectedProcedure
+    .input(z.object({
+      matterId: z.string(),
+      phaseName: z.string(),
+      versionNumber: z.number().int().positive(),
+    }))
+    .query(async ({ input }) => {
+      return getEvaluationByVersion(input.matterId, input.phaseName, input.versionNumber);
+    }),
+
   list: protectedProcedure
     .input(z.object({
       matterId: z.string(),
