@@ -1,0 +1,33 @@
+{
+  "revisedDocument": "ENGAGEMENT LETTER\n\nDear Client,\n\nWe are pleased to confirm our engagement. The terms of our representation are set forth below.\n\n1. SCOPE OF REPRESENTATION\nOur representation is limited to the matter described above.\n\n2. FEES AND BILLING\nOur fees will be billed at our standard hourly rates.\n\n3. TERMINATION\nEither party may terminate this engagement upon thirty (30) days' written notice.\n\nSincerely,\n[Attorney Name]\n",
+  "appliedChanges": [
+    {
+      "changeIndex": 0,
+      "description": "Added 30-day termination notice requirement"
+    }
+  ],
+  "unresolvedAnchors": [
+    {
+      "changeIndex": 1,
+      "sourceFeedbackId": 1,
+      "sourceExcerpt": "The indemnification clause in Section 4 should be strengthened to explicitly cover third-party claims.",
+      "attemptedAnchor": {
+        "kind": "section_reference",
+        "value": "Section 4",
+        "locatorText": "Section 4 - Liability and Indemnification"
+      },
+      "reason": "not_found"
+    },
+    {
+      "changeIndex": 2,
+      "sourceFeedbackId": 2,
+      "sourceExcerpt": "The confidentiality provisions do not address digital communications including email and cloud storage.",
+      "attemptedAnchor": {
+        "kind": "section_reference",
+        "value": "Section 5",
+        "locatorText": "Section 5 - Confidentiality"
+      },
+      "reason": "not_found"
+    }
+  ]
+}
