@@ -4,7 +4,9 @@ import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router, mergeRouters } from "./_core/trpc";
+import { documentRouter } from "./routers/documentRouter";
+import { iterativePhaseRouter } from "./routers/iterativePhaseRouter";
 import {
   createMatter, listMatters, getMatterByMatterId, renameMatter, updateClientName,
   deleteMatter, archiveMatter, unarchiveMatter, assignMatterToFolder,
@@ -1053,6 +1055,8 @@ export const appRouter = router({
   factChange: factChangeRouter,
   upload: uploadRouter,
   config: configRouter,
+  document: documentRouter,
+  iterativePhase: iterativePhaseRouter,
 });
 
 export type AppRouter = typeof appRouter;
