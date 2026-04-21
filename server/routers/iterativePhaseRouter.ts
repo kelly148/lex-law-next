@@ -72,7 +72,15 @@ async function resolveScope(
   const matter = await getMatterByMatterId(doc.matterId);
   if (!matter) throw new TRPCError({ code: 'NOT_FOUND', message: 'Matter not found' });
 
-  // Routing-flag enforcement: document scope is only valid on model-3 matters.
+  // Routing-flag enforcement (1): document scope is only valid on document-holding phases.
+  if (!DOCUMENT_HOLDING_PHASES.has(doc.phaseName)) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `Document-scoped operations are not valid on phase '${doc.phaseName}'. Only document-holding phases (${Array.from(DOCUMENT_HOLDING_PHASES).join(', ')}) support document scope.`,
+    });
+  }
+
+  // Routing-flag enforcement (2): document scope is only valid on model-3 matters.
   if ((matter.workflowModelVersion ?? 2) !== 3) {
     emitTelemetry({
       kind: 'legacy_mode_used',
