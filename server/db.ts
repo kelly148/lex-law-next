@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -9,9 +9,16 @@ import {
   InsertFactChange, factChanges,
   InsertUpload, uploads,
   InsertMatterFolder, matterFolders,
+  // Phase B additions
+  documents, InsertDocument, Document,
+  feedbackEvaluations, InsertFeedbackEvaluation,
+  feedbackManualSelections, InsertFeedbackManualSelection,
 } from "../drizzle/schema";
 import { PHASE_NAMES, PHASE_ORDER, PHASE_CONFIG } from "../shared/workflow";
 import { ENV } from './_core/env';
+import { emitTelemetry } from '../shared/telemetry';
+import { DOCUMENT_HOLDING_PHASES } from '../shared/schemas/scope';
+import type { WorkflowState } from '../shared/workflow';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -26,6 +33,9 @@ export async function getDb() {
   }
   return _db;
 }
+
+// Minimal transaction type alias for the conditional helpers.
+export type DbTransaction = ReturnType<typeof drizzle>;
 
 // ── User Helpers ─────────────────────────────────────────────────────
 export async function upsertUser(user: InsertUser): Promise<void> {
@@ -166,6 +176,126 @@ export async function markPhasesStale(matterId: string, phaseNames: string[]) {
     .where(and(eq(phases.matterId, matterId), inArray(phases.phaseName, phaseNames as any)));
 }
 
+// ── updatePhaseWorkflowStateConditional (Phase B) ─────────────────────
+// Conditional (optimistic-lock) phase state update per v1.3 §1.3.5 pattern.
+// Throws CONFLICT if the phase is not in expectedCurrentState.
+export async function updatePhaseWorkflowStateConditional(
+  _tx: DbTransaction | null,
+  phaseId: number,
+  expectedCurrentState: WorkflowState,
+  nextState: WorkflowState,
+  options: {
+    matterId: string;
+    phaseName: string;
+    procedure: string;
+    workflowData?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+
+  const updateObj: Record<string, unknown> = { workflowState: nextState as any };
+  if (options.workflowData !== undefined) updateObj.workflowData = options.workflowData;
+  if (nextState === 'complete') updateObj.status = 'completed' as any;
+  else if (nextState !== 'idle') updateObj.status = 'in_progress' as any;
+
+  const result = await db.update(phases)
+    .set(updateObj)
+    .where(and(eq(phases.id, phaseId), eq(phases.workflowState, expectedCurrentState as any)));
+
+  const affected = (result as any).rowsAffected ?? (result as any).affectedRows ?? 0;
+
+  if (affected === 0) {
+    const [current] = await db.select({ workflowState: phases.workflowState })
+      .from(phases).where(eq(phases.id, phaseId)).limit(1);
+
+    emitTelemetry({
+      kind: 'concurrency_conflict',
+      phaseId,
+      documentId: null,
+      targetKind: 'phase',
+      procedure: options.procedure,
+      expectedState: expectedCurrentState,
+      actualState: current?.workflowState ?? 'unknown',
+    });
+
+    const { TRPCError } = await import('@trpc/server');
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `Phase is in state '${current?.workflowState ?? 'unknown'}', not '${expectedCurrentState}'. Another operation may be in progress.`,
+    });
+  }
+
+  emitTelemetry({
+    kind: 'state_transition',
+    phaseId,
+    documentId: null,
+    targetKind: 'phase',
+    matterId: options.matterId,
+    phaseName: options.phaseName,
+    from: expectedCurrentState,
+    to: nextState,
+    procedure: options.procedure,
+  });
+}
+
+// ── updateDocumentWorkflowStateConditional (Phase B) ──────────────────
+// Mirrors updatePhaseWorkflowStateConditional for the documents table.
+// Per v1.4.2 §B.3.3. Writes to documents.workflowState ONLY — never to phases.workflowState.
+export async function updateDocumentWorkflowStateConditional(
+  _tx: DbTransaction | null,
+  documentId: number,
+  expectedCurrentState: WorkflowState,
+  nextState: WorkflowState,
+  options: {
+    matterId: string;
+    phaseName: string;
+    procedure: string;
+  },
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+
+  const result = await db.update(documents)
+    .set({ workflowState: nextState, updatedAt: new Date() })
+    .where(and(eq(documents.id, documentId), eq(documents.workflowState, expectedCurrentState)));
+
+  const affected = (result as any).rowsAffected ?? (result as any).affectedRows ?? 0;
+
+  if (affected === 0) {
+    const [current] = await db.select({ workflowState: documents.workflowState })
+      .from(documents).where(eq(documents.id, documentId)).limit(1);
+
+    emitTelemetry({
+      kind: 'concurrency_conflict',
+      phaseId: null,
+      documentId,
+      targetKind: 'document',
+      procedure: options.procedure,
+      expectedState: expectedCurrentState,
+      actualState: current?.workflowState ?? 'unknown',
+    });
+
+    const { TRPCError } = await import('@trpc/server');
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `Document is in state '${current?.workflowState ?? 'unknown'}', not '${expectedCurrentState}'. Another operation may be in progress.`,
+    });
+  }
+
+  emitTelemetry({
+    kind: 'state_transition',
+    phaseId: null,
+    documentId,
+    targetKind: 'document',
+    matterId: options.matterId,
+    phaseName: options.phaseName,
+    from: expectedCurrentState,
+    to: nextState,
+    procedure: options.procedure,
+  });
+}
+
 // ── Version Helpers ──────────────────────────────────────────────────
 export async function createVersion(data: InsertVersion) {
   const db = await getDb();
@@ -189,74 +319,6 @@ export async function getVersionsByPhase(matterId: string, phaseName: string) {
     .orderBy(desc(versions.versionNumber), asc(versions.provider));
 }
 
-/**
- * Collect the official final content from all completed phases before `targetPhaseName`.
- * Returns a formatted string of prior phase outputs to use as source material.
- */
-export async function collectPriorPhaseOutputs(matterId: string, targetPhaseName: string): Promise<string | undefined> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  // Get all phases for this matter
-  const allPhases = await db.select().from(phases)
-    .where(eq(phases.matterId, matterId))
-    .orderBy(asc(phases.phaseOrder));
-
-  const parts: string[] = [];
-
-  for (const phase of allPhases) {
-    // Only include phases that come before the target and are completed
-    if (phase.phaseName === targetPhaseName) break;
-    if (phase.status !== "completed") continue;
-
-    // Get the official final version for this phase
-    let content: string | null = null;
-
-    if (phase.officialFinalVersion != null) {
-      // Fetch the specific official final version
-      const [row] = await db.select().from(versions)
-        .where(and(
-          eq(versions.matterId, matterId),
-          eq(versions.phaseName, phase.phaseName),
-          eq(versions.versionNumber, phase.officialFinalVersion),
-        )).limit(1);
-      content = row?.content ?? null;
-    }
-
-    if (!content) {
-      // Fallback: get the selected version
-      const [row] = await db.select().from(versions)
-        .where(and(
-          eq(versions.matterId, matterId),
-          eq(versions.phaseName, phase.phaseName),
-          eq(versions.isSelected, 1),
-        )).limit(1);
-      content = row?.content ?? null;
-    }
-
-    if (!content) {
-      // Last resort: get the highest version number
-      const [row] = await db.select().from(versions)
-        .where(and(
-          eq(versions.matterId, matterId),
-          eq(versions.phaseName, phase.phaseName),
-        ))
-        .orderBy(desc(versions.versionNumber))
-        .limit(1);
-      content = row?.content ?? null;
-    }
-
-    if (content) {
-      // Use the configured display label (e.g. "Advisory Memo", "Engagement Letter")
-      const config = PHASE_CONFIG[phase.phaseName as keyof typeof PHASE_CONFIG];
-      const label = config?.label ?? (phase.phaseName.charAt(0).toUpperCase() + phase.phaseName.slice(1));
-      parts.push(`=== ${label.toUpperCase()} ===\n${content}`);
-    }
-  }
-
-  return parts.length > 0 ? parts.join("\n\n---\n\n") : undefined;
-}
-
 export async function getVersionByNumber(matterId: string, phaseName: string, versionNumber: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -272,10 +334,8 @@ export async function getVersionByNumber(matterId: string, phaseName: string, ve
 export async function selectVersion(versionId: number, matterId: string, phaseName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  // Deselect all for this phase
   await db.update(versions).set({ isSelected: 0 })
     .where(and(eq(versions.matterId, matterId), eq(versions.phaseName, phaseName)));
-  // Select the chosen one
   await db.update(versions).set({ isSelected: 1 }).where(eq(versions.id, versionId));
 }
 
@@ -323,7 +383,6 @@ export async function createFactChange(data: InsertFactChange) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.insert(factChanges).values(data);
-  // Mark affected phases AND all downstream phases stale
   const affectedPhases = data.affectedPhases as string[];
   if (affectedPhases && affectedPhases.length > 0) {
     const earliestOrder = Math.min(...affectedPhases.map(p => PHASE_ORDER[p as keyof typeof PHASE_ORDER] ?? 99));
@@ -367,12 +426,9 @@ export async function updateUploadExtractedText(uploadId: number, extractedText:
 }
 
 // ── Matter Delete / Archive Helpers ───────────────────────────────────────────
-
-/** Hard-delete a matter and all related rows (cascade). */
 export async function deleteMatter(matterId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  // Delete child rows first (no FK cascade in TiDB by default)
   await db.delete(uploads).where(eq(uploads.matterId, matterId));
   await db.delete(feedback).where(eq(feedback.matterId, matterId));
   await db.delete(factChanges).where(eq(factChanges.matterId, matterId));
@@ -382,7 +438,6 @@ export async function deleteMatter(matterId: string) {
   return { success: true };
 }
 
-/** Soft-archive a matter (status = 'archived'). */
 export async function archiveMatter(matterId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -390,7 +445,6 @@ export async function archiveMatter(matterId: string) {
   return getMatterByMatterId(matterId);
 }
 
-/** Restore an archived matter back to active. */
 export async function unarchiveMatter(matterId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -398,7 +452,6 @@ export async function unarchiveMatter(matterId: string) {
   return getMatterByMatterId(matterId);
 }
 
-/** Assign (or unassign) a matter to a folder. */
 export async function assignMatterToFolder(matterId: string, folderId: string | null) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -407,7 +460,6 @@ export async function assignMatterToFolder(matterId: string, folderId: string | 
 }
 
 // ── Folder Helpers ─────────────────────────────────────────────────────────────────
-
 export async function createFolder(data: InsertMatterFolder) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -430,12 +482,215 @@ export async function renameFolder(folderId: string, name: string) {
   return row ?? null;
 }
 
-/** Delete a folder — unassigns all matters in it first. */
 export async function deleteFolder(folderId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  // Unassign all matters from this folder
   await db.update(matters).set({ folderId: null }).where(eq(matters.folderId, folderId));
   await db.delete(matterFolders).where(eq(matterFolders.folderId, folderId));
   return { success: true };
+}
+
+// ── collectPriorPhaseOutputs ─────────────────────────────────────────
+export async function collectPriorPhaseOutputs(matterId: string, targetPhaseName: string): Promise<string | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const allPhases = await db.select().from(phases)
+    .where(eq(phases.matterId, matterId))
+    .orderBy(asc(phases.phaseOrder));
+  const parts: string[] = [];
+  for (const phase of allPhases) {
+    if (phase.phaseName === targetPhaseName) break;
+    if (phase.status !== "completed") continue;
+    let content: string | null = null;
+    if (phase.officialFinalVersion != null) {
+      const [row] = await db.select().from(versions)
+        .where(and(
+          eq(versions.matterId, matterId),
+          eq(versions.phaseName, phase.phaseName),
+          eq(versions.versionNumber, phase.officialFinalVersion),
+        )).limit(1);
+      content = row?.content ?? null;
+    }
+    if (!content) {
+      const [row] = await db.select().from(versions)
+        .where(and(eq(versions.matterId, matterId), eq(versions.phaseName, phase.phaseName), eq(versions.isSelected, 1)))
+        .limit(1);
+      content = row?.content ?? null;
+    }
+    if (!content) {
+      const [row] = await db.select().from(versions)
+        .where(and(eq(versions.matterId, matterId), eq(versions.phaseName, phase.phaseName)))
+        .orderBy(desc(versions.versionNumber)).limit(1);
+      content = row?.content ?? null;
+    }
+    if (content) {
+      const config = PHASE_CONFIG[phase.phaseName as keyof typeof PHASE_CONFIG];
+      const label = config?.label ?? (phase.phaseName.charAt(0).toUpperCase() + phase.phaseName.slice(1));
+      parts.push(`=== ${label.toUpperCase()} ===\n${content}`);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n\n---\n\n") : undefined;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase B: Document CRUD helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+export async function createDocument(data: InsertDocument): Promise<Document> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  await db.insert(documents).values(data);
+  const [row] = await db.select().from(documents)
+    .where(and(eq(documents.matterId, data.matterId), eq(documents.phaseName, data.phaseName)))
+    .orderBy(desc(documents.createdAt)).limit(1);
+  if (!row) throw new Error('Document insert failed');
+  return row;
+}
+
+export async function getDocumentById(documentId: number): Promise<Document | null> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  const [row] = await db.select().from(documents)
+    .where(eq(documents.id, documentId)).limit(1);
+  return row ?? null;
+}
+
+export async function listDocuments(
+  matterId: string,
+  phaseName?: string,
+  includeArchived = false,
+): Promise<Document[]> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  const conditions: ReturnType<typeof eq>[] = [eq(documents.matterId, matterId)];
+  if (phaseName) conditions.push(eq(documents.phaseName, phaseName));
+  if (!includeArchived) conditions.push(sql`${documents.status} != 'archived'` as any);
+  return db.select().from(documents)
+    .where(and(...conditions))
+    .orderBy(asc(documents.createdAt));
+}
+
+export async function updateDocumentTitle(documentId: number, title: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  await db.update(documents).set({ title, updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+}
+
+export async function updateDocumentNotes(documentId: number, notes: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  await db.update(documents).set({ notes, updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+}
+
+export async function archiveDocument(documentId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  await db.update(documents).set({ status: 'archived', updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+}
+
+export async function setDocumentOfficialFinalVersion(
+  documentId: number,
+  versionNumber: number,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  await db.update(documents)
+    .set({ officialFinalVersionNumber: versionNumber, status: 'complete', updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+}
+
+// ── getPhaseContainerStatus ──────────────────────────────────────────
+// Per v1.4.2 §B.3.6 and v2.4.2 §3.2.
+//
+// INVARIANT: This is the ONLY sanctioned way to read phase container status
+// on model-3 matters. Do NOT read phases.workflowState directly for
+// document-holding phases on model-3 matters anywhere in the codebase.
+export type PhaseContainerStatus = 'idle' | 'in_progress' | 'complete';
+
+export async function getPhaseContainerStatus(
+  matterId: string,
+  phaseName: string,
+): Promise<PhaseContainerStatus> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+
+  // Non-document-holding phases: always derive from phases.workflowState (v2.3 semantics).
+  if (!DOCUMENT_HOLDING_PHASES.has(phaseName)) {
+    const phase = await getPhase(matterId, phaseName);
+    if (!phase) return 'idle';
+    const ws = phase.workflowState as string;
+    if (ws === 'idle' || ws === 'model_selection') return 'idle';
+    if (ws === 'complete' || ws === 'skipped') return 'complete';
+    return 'in_progress';
+  }
+
+  // Document-holding phase: check matter's workflowModelVersion.
+  const [matter] = await db.select({ workflowModelVersion: matters.workflowModelVersion })
+    .from(matters).where(eq(matters.matterId, matterId)).limit(1);
+
+  if (!matter) return 'idle';
+
+  // Model-2 matters: fall through to v2.3 derivation.
+  if ((matter.workflowModelVersion ?? 2) === 2) {
+    const phase = await getPhase(matterId, phaseName);
+    if (!phase) return 'idle';
+    const ws = phase.workflowState as string;
+    if (ws === 'idle' || ws === 'model_selection') return 'idle';
+    if (ws === 'complete' || ws === 'skipped') return 'complete';
+    return 'in_progress';
+  }
+
+  // Model-3 matters: derive from documents table.
+  const docs = await listDocuments(matterId, phaseName, false); // non-archived only
+  if (docs.length === 0) return 'idle';
+  if (docs.every(d => d.status === 'complete')) return 'complete';
+  return 'in_progress';
+}
+
+// ── FeedbackEvaluation helpers ────────────────────────────────────────
+
+export async function createFeedbackEvaluation(data: InsertFeedbackEvaluation) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  await db.insert(feedbackEvaluations).values(data);
+  const [row] = await db.select().from(feedbackEvaluations)
+    .where(and(
+      eq(feedbackEvaluations.matterId, data.matterId),
+      eq(feedbackEvaluations.phaseName, data.phaseName),
+      eq(feedbackEvaluations.versionNumber, data.versionNumber),
+      eq(feedbackEvaluations.evaluatorProvider, data.evaluatorProvider),
+    )).limit(1);
+  return row;
+}
+
+export async function getFeedbackEvaluationsByVersion(
+  matterId: string,
+  phaseName: string,
+  versionNumber: number,
+  documentId?: number | null,
+) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  const conditions: ReturnType<typeof eq>[] = [
+    eq(feedbackEvaluations.matterId, matterId),
+    eq(feedbackEvaluations.phaseName, phaseName),
+    eq(feedbackEvaluations.versionNumber, versionNumber),
+  ];
+  if (documentId != null) conditions.push(eq(feedbackEvaluations.documentId, documentId));
+  return db.select().from(feedbackEvaluations).where(and(...conditions));
+}
+
+// ── FeedbackManualSelection helpers ──────────────────────────────────
+
+export async function createFeedbackManualSelection(data: InsertFeedbackManualSelection) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  await db.insert(feedbackManualSelections).values(data);
+  const [row] = await db.select().from(feedbackManualSelections)
+    .where(eq(feedbackManualSelections.feedbackId, data.feedbackId))
+    .orderBy(desc(feedbackManualSelections.id)).limit(1);
+  return row;
 }
