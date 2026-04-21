@@ -92,6 +92,7 @@ export const documentRouter = router({
       documentType: z.string(),
       customTypeLabel: z.string().max(200).optional(),
       title: z.string().optional(),
+      notes: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       await requireModel3(input.matterId, 'document.create');
@@ -146,7 +147,7 @@ export const documentRouter = router({
         status: 'drafting',
         workflowState: 'idle',
         officialFinalVersionNumber: null,
-        notes: null,
+        notes: input.notes?.trim() || null,
       });
 
       // If this is the first document in the phase, transition phase to in_progress.
@@ -169,8 +170,22 @@ export const documentRouter = router({
         documentType: input.documentType,
         isCustom: input.documentType === 'custom',
       });
+      if (input.documentType === 'custom') {
+        emitTelemetry({
+          kind: 'document_type_custom_used',
+          matterId: input.matterId,
+          documentId: doc.id,
+          customTypeLabel: input.customTypeLabel ?? '',
+        });
+      }
 
-      return { documentId: doc.id };
+      return {
+        documentId: doc.id,
+        documentType: input.documentType,
+        isCustom: input.documentType === 'custom',
+        customTypeLabel: input.customTypeLabel ?? null,
+        title: resolvedTitle,
+      };
     }),
 
   // ── document.list ─────────────────────────────────────────────────
@@ -248,6 +263,27 @@ export const documentRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Document is already archived.' });
       }
 
+      // Per v2.4.2 §5.4 and Phase C Test 8/12: block archival when the iterative
+      // loop is in-flight (any state other than idle, complete, or archived).
+      // The error message names the state that would need to be resolved.
+      const ARCHIVAL_BLOCKED_STATES = new Set([
+        'awaiting_attorney_review',
+        'awaiting_feedback_action',
+        'revising',
+        'regenerating',
+        'formatting',
+        'awaiting_format_review',
+        'awaiting_decisions',
+        'waiting_on_client',
+      ]);
+      const currentWorkflowState = doc.workflowState ?? 'idle';
+      if (ARCHIVAL_BLOCKED_STATES.has(currentWorkflowState)) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: `Cannot archive document while it is in state '${currentWorkflowState}'. Resolve the current workflow step first.`,
+        });
+      }
+
       await archiveDocument(input.documentId);
 
       emitTelemetry({
@@ -311,8 +347,7 @@ export const documentRouter = router({
       phaseName: z.string(),
     }))
     .query(async ({ input }) => {
-      const status = await getPhaseContainerStatus(input.matterId, input.phaseName);
-      return { status };
+      return getPhaseContainerStatus(input.matterId, input.phaseName);
     }),
 });
 

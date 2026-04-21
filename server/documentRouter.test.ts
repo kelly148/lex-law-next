@@ -248,6 +248,6 @@ describe('getPhaseContainerStatus', () => {
       phaseName: 'agreement',
     });
 
-    expect(result.status).toBe('in_progress');
+    expect(result).toBe('in_progress');
   });
 });

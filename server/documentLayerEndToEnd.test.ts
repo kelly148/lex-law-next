@@ -209,7 +209,7 @@ describe('Estate Planning Package — document layer integration', () => {
       phaseName: 'agreement',
     });
 
-    expect(result.status).toBe('in_progress');
+    expect(result).toBe('in_progress');
   });
 
   // B. resolveSiblingDocuments includes trust and will, skips financial_poa (not accepted), excludes medical_poa (archived)
@@ -271,16 +271,17 @@ describe('Estate Planning Package — document layer integration', () => {
   });
 
   // F. document.archive transitions status to archived
+  // Use docTrust (id: 101, workflowState: 'complete') — not in-flight, so archive is allowed.
   it('F: document.archive calls archiveDocument and emits telemetry', async () => {
     const { documentRouter } = await import('./routers/documentRouter');
     const caller = documentRouter.createCaller(createAuthCtx());
 
-    const result = await caller.archive({ documentId: 103 });
+    const result = await caller.archive({ documentId: 101 });
 
     expect(result).toMatchObject({ success: true });
-    expect(archiveDocument).toHaveBeenCalledWith(103);
+    expect(archiveDocument).toHaveBeenCalledWith(101);
     expect(emitTelemetry).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'document_archived', documentId: 103 }),
+      expect.objectContaining({ kind: 'document_archived', documentId: 101 }),
     );
   });
 
@@ -296,7 +297,7 @@ describe('Estate Planning Package — document layer integration', () => {
       phaseName: 'agreement',
     });
 
-    expect(result.status).toBe('complete');
+    expect(result).toBe('complete');
   });
 
   // H. setWaitingOnClient emits correct telemetry for document scope
