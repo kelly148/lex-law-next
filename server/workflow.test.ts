@@ -338,21 +338,23 @@ describe("protected routes reject unauthenticated requests", () => {
 
 describe("matter and phase routers", () => {
   vi.mock("./db", () => ({
+    // R-MCR: legacy test fixtures representing pre-v2.4.2 matters must explicitly
+    // set workflowModelVersion: 2 — not rely on the DB default.
     createMatter: vi.fn().mockResolvedValue({
       id: 1, matterId: "test-matter-123", matterName: "Test Matter", jurisdiction: "Virginia — Fairfax County",
-      workflowPath: "full", status: "active", createdBy: 1,
+      workflowPath: "full", status: "active", workflowModelVersion: 2, createdBy: 1,
       createdAt: new Date(), updatedAt: new Date(),
     }),
     listMatters: vi.fn().mockResolvedValue([{
       id: 1, matterId: "test-matter-123", matterName: "Test Matter", jurisdiction: "Virginia — Fairfax County",
-      workflowPath: "full", status: "active", createdBy: 1,
+      workflowPath: "full", status: "active", workflowModelVersion: 2, createdBy: 1,
       createdAt: new Date(), updatedAt: new Date(),
     }]),
     getMatterByMatterId: vi.fn().mockImplementation((matterId: string) => {
       if (matterId === "test-matter-123") {
         return Promise.resolve({
           id: 1, matterId: "test-matter-123", matterName: "Test Matter", jurisdiction: "Virginia — Fairfax County",
-          workflowPath: "full", status: "active", createdBy: 1,
+          workflowPath: "full", status: "active", workflowModelVersion: 2, createdBy: 1,
           createdAt: new Date(), updatedAt: new Date(),
         });
       }
@@ -361,7 +363,7 @@ describe("matter and phase routers", () => {
     renameMatter: vi.fn().mockImplementation((matterId: string, matterName: string) =>
       Promise.resolve({
         id: 1, matterId, matterName, jurisdiction: "Virginia — Fairfax County",
-        workflowPath: "full", status: "active", createdBy: 1,
+        workflowPath: "full", status: "active", workflowModelVersion: 2, createdBy: 1,
         createdAt: new Date(), updatedAt: new Date(),
       })
     ),
