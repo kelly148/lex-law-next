@@ -60,12 +60,15 @@ const matterRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const matterId = nanoid(12);
+      // R11/R-MCR: every new matter MUST explicitly set workflowModelVersion: 3.
+      // The DB default of 2 exists only to backfill pre-v2.4.2 legacy rows.
       const matter = await createMatter({
         matterId,
         matterName: input.matterName,
         clientName: input.clientName ?? "",
         jurisdiction: input.jurisdiction,
         workflowPath: input.workflowPath,
+        workflowModelVersion: 3,
         createdBy: ctx.user.id,
       });
 
