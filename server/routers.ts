@@ -4,7 +4,9 @@ import { TRPCError } from "@trpc/server";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router, mergeRouters } from "./_core/trpc";
+import { documentRouter } from "./routers/documentRouter";
+import { iterativePhaseRouter } from "./routers/iterativePhaseRouter";
 import {
   createMatter, listMatters, getMatterByMatterId, renameMatter, updateClientName,
   deleteMatter, archiveMatter, unarchiveMatter, assignMatterToFolder,
@@ -60,12 +62,15 @@ const matterRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const matterId = nanoid(12);
+      // R11/R-MCR: every new matter MUST explicitly set workflowModelVersion: 3.
+      // The DB default of 2 exists only to backfill pre-v2.4.2 legacy rows.
       const matter = await createMatter({
         matterId,
         matterName: input.matterName,
         clientName: input.clientName ?? "",
         jurisdiction: input.jurisdiction,
         workflowPath: input.workflowPath,
+        workflowModelVersion: 3,
         createdBy: ctx.user.id,
       });
 
@@ -1050,6 +1055,8 @@ export const appRouter = router({
   factChange: factChangeRouter,
   upload: uploadRouter,
   config: configRouter,
+  document: documentRouter,
+  iterativePhase: iterativePhaseRouter,
 });
 
 export type AppRouter = typeof appRouter;

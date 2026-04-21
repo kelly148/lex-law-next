@@ -1,4 +1,5 @@
-import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { index, int, json, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { sql } from "drizzle-orm";
 
 // ── Users (Manus OAuth) ──────────────────────────────────────────────
 export const users = mysqlTable("users", {
@@ -40,6 +41,10 @@ export const matters = mysqlTable("matters", {
   workflowPath: mysqlEnum("workflowPath", ["full", "core_only"]).default("full").notNull(),
   status: mysqlEnum("status", ["active", "completed", "archived"]).default("active").notNull(),
   folderId: varchar("folderId", { length: 64 }),
+  // v2.4.2: routing flag. 2 = v2.3 phase-per-document model; 3 = v2.4.2 document-layer model.
+  // DB default is 2 solely for migration backfill of pre-existing matters.
+  // Every new matter creation call site MUST explicitly set workflowModelVersion: 3 (R11/R-MCR).
+  workflowModelVersion: int("workflowModelVersion").notNull().default(2),
   createdBy: int("createdBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -65,6 +70,9 @@ export const phases = mysqlTable("phases", {
     "awaiting_attorney_review", "revising", "reviewing", "evaluating",
     "awaiting_decisions", "regenerating", "accepted", "formatting",
     "awaiting_format_review", "complete",
+    // v2.3 iterative-review states added in Phase 1
+    "awaiting_reviews", "awaiting_feedback_action", "evaluating_feedback",
+    "awaiting_evaluation_decisions", "awaiting_manual_decisions",
   ]).default("idle").notNull(),
   // Workflow mode for this phase instance
   activeWorkflowMode: varchar("activeWorkflowMode", { length: 64 }),
@@ -77,12 +85,49 @@ export const phases = mysqlTable("phases", {
   isOptional: int("isOptional").default(0).notNull(),
   isStale: int("isStale").default(0).notNull(),
   workflowData: json("workflowData"),
+  // v2.3 iterative-review fields
+  initialGeneratorModel: varchar("initialGeneratorModel", { length: 50 }),
+  iterativeMeta: json("iterativeMeta"),
+  promptMode: varchar("promptMode", { length: 20 }).default("base"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type Phase = typeof phases.$inferSelect;
 export type InsertPhase = typeof phases.$inferInsert;
+
+// ── Documents (v2.4.2 document layer) ────────────────────────────────
+// One row per document within a document-holding phase of a model-3 matter.
+// phaseName is constrained to document-holding phases only (engagement, memo, matrix, agreement).
+// CHECK constraints are enforced at the application layer in document.create (Phase B)
+// because TiDB/MySQL partial-index and CHECK support varies by version.
+export const documents = mysqlTable("documents", {
+  id: int("id").autoincrement().primaryKey(),
+  matterId: varchar("matterId", { length: 36 }).notNull().references(() => matters.id),
+  phaseName: varchar("phaseName", { length: 50 }).notNull(),
+  documentType: varchar("documentType", { length: 50 }).notNull(),
+  customTypeLabel: varchar("customTypeLabel", { length: 200 }),
+  title: varchar("title", { length: 200 }).notNull(),
+  notes: text("notes"),
+  status: mysqlEnum("status", ["drafting", "complete", "archived"]).notNull().default("drafting"),
+  workflowState: varchar("workflowState", { length: 50 }).notNull().default("idle"),
+  initialGeneratorModel: varchar("initialGeneratorModel", { length: 50 }),
+  iterativeMeta: json("iterativeMeta"),
+  officialFinalVersionNumber: int("officialFinalVersionNumber"),
+  promptMode: varchar("promptMode", { length: 20 }).default("base"),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+}, (table) => ({
+  matterPhaseStatusIdx: index("idx_documents_matter_phase_status").on(
+    table.matterId, table.phaseName, table.status
+  ),
+  matterCreatedIdx: index("idx_documents_matter_created").on(
+    table.matterId, table.createdAt
+  ),
+}));
+
+export type Document = typeof documents.$inferSelect;
+export type InsertDocument = typeof documents.$inferInsert;
 
 // ── Versions (draft outputs per phase) ───────────────────────────────
 export const versions = mysqlTable("versions", {
@@ -95,8 +140,20 @@ export const versions = mysqlTable("versions", {
   isSelected: int("isSelected").default(0).notNull(),
   isFormattingPass: int("isFormattingPass").default(0).notNull(),
   metadata: json("metadata"),
+  // v2.4.2: nullable FK to documents. Null for model-2 (legacy) rows.
+  documentId: int("documentId").references(() => documents.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (table) => ({
+  // Unique index on (documentId, versionNumber) for non-null documentId rows.
+  // MySQL treats NULLs as distinct in unique indexes, so legacy rows (documentId IS NULL)
+  // do not conflict with each other — only non-null pairs are uniqueness-enforced.
+  documentVersionUniq: uniqueIndex("uniq_versions_document_version").on(
+    table.documentId, table.versionNumber
+  ),
+  documentLatestIdx: index("idx_versions_document_latest").on(
+    table.documentId, table.versionNumber
+  ),
+}));
 
 export type Version = typeof versions.$inferSelect;
 export type InsertVersion = typeof versions.$inferInsert;
@@ -112,11 +169,62 @@ export const feedback = mysqlTable("feedback", {
   point: text("point").notNull(),
   decision: mysqlEnum("decision", ["pending", "accepted", "rejected", "modified"]).default("pending").notNull(),
   attorneyNote: text("attorneyNote"),
+  // v2.4.2: nullable FK to documents. Null for model-2 (legacy) rows.
+  documentId: int("documentId").references(() => documents.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (table) => ({
+  documentVersionIdx: index("idx_feedback_document_version").on(
+    table.documentId, table.versionNumber
+  ),
+}));
 
 export type Feedback = typeof feedback.$inferSelect;
 export type InsertFeedback = typeof feedback.$inferInsert;
+
+// ── Feedback Evaluations (v2.3 iterative-review evaluator output) ────
+export const feedbackEvaluations = mysqlTable("feedback_evaluations", {
+  id: int("id").autoincrement().primaryKey(),
+  matterId: varchar("matterId", { length: 36 }).notNull(),
+  phaseName: varchar("phaseName", { length: 50 }).notNull(),
+  versionNumber: int("versionNumber").notNull(),
+  evaluatorProvider: varchar("evaluatorProvider", { length: 50 }).notNull(),
+  narrativeReasoning: text("narrativeReasoning").notNull(),
+  pointByPoint: json("pointByPoint").notNull(),
+  // v2.4.2: nullable FK to documents. Null for model-2 (legacy) rows.
+  documentId: int("documentId").references(() => documents.id),
+  createdAt: timestamp("createdAt").defaultNow(),
+}, (table) => ({
+  lookupIdx: index("idx_feedback_evaluations_lookup").on(
+    table.matterId, table.phaseName, table.versionNumber
+  ),
+  documentVersionIdx: index("idx_feedback_evaluations_document_version").on(
+    table.documentId, table.versionNumber
+  ),
+}));
+
+export type FeedbackEvaluation = typeof feedbackEvaluations.$inferSelect;
+export type InsertFeedbackEvaluation = typeof feedbackEvaluations.$inferInsert;
+
+// ── Feedback Manual Selections (v2.3 manual-path attorney decisions) ─
+export const feedbackManualSelections = mysqlTable("feedback_manual_selections", {
+  id: int("id").autoincrement().primaryKey(),
+  feedbackId: int("feedbackId").notNull().references(() => feedback.id, { onDelete: "cascade" }),
+  versionNumber: int("versionNumber").notNull(),
+  selectionOrder: int("selectionOrder").notNull(),
+  selectionKind: mysqlEnum("selectionKind", ["paragraph", "span"]).notNull(),
+  sourceText: text("sourceText").notNull(),
+  precedingContext: text("precedingContext"),
+  followingContext: text("followingContext"),
+  editedText: text("editedText"),
+  decision: mysqlEnum("decision", ["accepted", "modified"]).notNull(),
+  createdAt: timestamp("createdAt").defaultNow(),
+}, (table) => ({
+  feedbackIdx: index("idx_fms_feedback").on(table.feedbackId, table.selectionOrder),
+  versionIdx: index("idx_fms_version").on(table.versionNumber),
+}));
+
+export type FeedbackManualSelection = typeof feedbackManualSelections.$inferSelect;
+export type InsertFeedbackManualSelection = typeof feedbackManualSelections.$inferInsert;
 
 // ── Fact Changes ─────────────────────────────────────────────────────
 export const factChanges = mysqlTable("fact_changes", {
